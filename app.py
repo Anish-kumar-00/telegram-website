@@ -1,8 +1,15 @@
+import os
+import tempfile
+import asyncio
+import hashlib
+
 import streamlit as st
-import requests
+from telethon import TelegramClient
+from telethon.errors import RPCError
+
 
 # ============================================================
-# 1. PAGE SETTINGS
+# 1. PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
@@ -12,76 +19,203 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ============================================================
-# 2. TELEGRAM BOT TOKEN
-# ============================================================
-
-TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
-
-API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
 # ============================================================
-# 3. CUSTOM CSS
+# 2. CSS
 # ============================================================
 
 st.markdown("""
 <style>
-    .stApp {
-        background: #0b0b0b;
-        color: white;
-    }
 
-    .main-title {
-        text-align: center;
-        font-size: 42px;
-        font-weight: 800;
-        margin-top: 20px;
-        margin-bottom: 10px;
-    }
+.stApp {
+    background: #080808;
+    color: white;
+}
 
-    .subtitle {
-        text-align: center;
-        color: #aaaaaa;
-        font-size: 17px;
-        margin-bottom: 30px;
-    }
+.main-title {
+    text-align: center;
+    font-size: 42px;
+    font-weight: 800;
+    margin-top: 15px;
+    margin-bottom: 5px;
+}
 
-    .status-box {
-        padding: 18px;
-        border-radius: 12px;
-        background: #151515;
-        border: 1px solid #292929;
-        margin-bottom: 20px;
-    }
+.subtitle {
+    text-align: center;
+    color: #999;
+    margin-bottom: 30px;
+}
 
-    .message-box {
-        background: #151515;
-        border: 1px solid #292929;
-        border-radius: 14px;
-        padding: 18px;
-        margin: 12px 0;
-    }
+.channel-card {
+    background: linear-gradient(145deg, #171717, #0d0d0d);
+    border: 1px solid #292929;
+    border-radius: 18px;
+    padding: 22px;
+    margin: 10px 0;
+}
 
-    .message-title {
-        font-size: 20px;
-        font-weight: 700;
-    }
+.channel-name {
+    font-size: 24px;
+    font-weight: 800;
+}
 
-    .message-text {
-        color: #cccccc;
-        font-size: 15px;
-        line-height: 1.6;
-    }
+.file-card {
+    background: #141414;
+    border: 1px solid #292929;
+    border-radius: 15px;
+    padding: 16px;
+    margin: 8px 0;
+}
 
-    .small-text {
-        color: #777777;
-        font-size: 13px;
-    }
+.file-name {
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.file-info {
+    color: #888;
+    font-size: 13px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
+
 # ============================================================
-# 4. HEADER
+# 3. SECRETS
+# ============================================================
+
+try:
+    API_ID = int(st.secrets["TELEGRAM_API_ID"])
+    API_HASH = st.secrets["TELEGRAM_API_HASH"]
+    BOT_TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
+
+except Exception:
+    st.error("❌ Telegram Secrets missing.")
+
+    st.code("""
+TELEGRAM_API_ID = "YOUR_API_ID"
+TELEGRAM_API_HASH = "YOUR_API_HASH"
+TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
+""")
+
+    st.stop()
+
+
+# ============================================================
+# 4. TELEGRAM CLIENT
+# ============================================================
+
+SESSION_FILE = "telegram_streamlit_bot"
+
+client = TelegramClient(
+    SESSION_FILE,
+    API_ID,
+    API_HASH
+)
+
+
+# ============================================================
+# 5. ASYNC HELPER
+# ============================================================
+
+def run_async(coro):
+    """
+    Run async Telegram operations safely.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+
+        if loop.is_running():
+            new_loop = asyncio.new_event_loop()
+
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
+
+        return loop.run_until_complete(coro)
+
+    except RuntimeError:
+        return asyncio.run(coro)
+
+
+# ============================================================
+# 6. CONNECT TELEGRAM
+# ============================================================
+
+async def connect_client():
+
+    if not client.is_connected():
+        await client.connect()
+
+    if not await client.is_user_authorized():
+
+        await client.start(
+            bot_token=BOT_TOKEN
+        )
+
+    return True
+
+
+try:
+
+    run_async(connect_client())
+
+except Exception as e:
+
+    st.error("❌ Telegram connection failed")
+    st.code(str(e))
+    st.stop()
+
+
+# ============================================================
+# 7. GET CHANNELS
+# ============================================================
+
+async def get_channels():
+
+    result = []
+
+    async for dialog in client.iter_dialogs():
+
+        entity = dialog.entity
+
+        # Only channels
+        if getattr(entity, "broadcast", False):
+
+            result.append({
+                "id": entity.id,
+                "title": getattr(
+                    entity,
+                    "title",
+                    "Unknown Channel"
+                ),
+                "username": getattr(
+                    entity,
+                    "username",
+                    None
+                )
+            })
+
+    return result
+
+
+try:
+
+    channels = run_async(
+        get_channels()
+    )
+
+except Exception as e:
+
+    st.error("❌ Channels load nahi ho paaye.")
+    st.code(str(e))
+    st.stop()
+
+
+# ============================================================
+# 8. HEADER
 # ============================================================
 
 st.markdown(
@@ -90,269 +224,581 @@ st.markdown(
 )
 
 st.markdown(
-    '<div class="subtitle">Private Telegram Channel Dashboard</div>',
+    '<div class="subtitle">'
+    'Your Private Telegram Channels'
+    '</div>',
     unsafe_allow_html=True
 )
 
+
 # ============================================================
-# 5. TELEGRAM BOT TEST
+# 9. CHANNEL CHECK
 # ============================================================
 
-try:
+if not channels:
 
-    response = requests.get(
-        f"{API_URL}/getMe",
-        timeout=15
+    st.warning(
+        "⚠️ Koi Telegram channel nahi mila."
     )
 
-    data = response.json()
-
-except Exception as e:
-
-    st.error("❌ Telegram API connection error")
-    st.code(str(e))
-    st.stop()
-
-# ============================================================
-# 6. BOT STATUS
-# ============================================================
-
-if not data.get("ok"):
-
-    st.error("❌ Telegram Bot Authentication Failed")
-
-    st.json(data)
+    st.info(
+        "Check karo ki bot ko tumhare private channels "
+        "me required access diya gaya hai."
+    )
 
     st.stop()
 
-bot = data["result"]
+
+# ============================================================
+# 10. SIDEBAR
+# ============================================================
+
+st.sidebar.title("📁 Channels")
+
+channel_names = [
+    channel["title"]
+    for channel in channels
+]
+
+selected_channel_name = st.sidebar.selectbox(
+    "Select Channel",
+    channel_names
+)
+
+
+selected_channel = next(
+    channel
+    for channel in channels
+    if channel["title"] == selected_channel_name
+)
+
+
+# ============================================================
+# 11. CHANNEL HEADER
+# ============================================================
 
 st.markdown(
     f"""
-    <div class="status-box">
-        <h3>🟢 Telegram Connected</h3>
-        <p><b>Bot Name:</b> {bot.get("first_name", "Unknown")}</p>
-        <p><b>Username:</b> @{bot.get("username", "Unknown")}</p>
-        <p class="small-text">
-            Telegram Bot API connection is working successfully.
-        </p>
+    <div class="channel-card">
+        <div class="channel-name">
+            📁 {selected_channel["title"]}
+        </div>
+        <div class="file-info">
+            Telegram Channel
+        </div>
     </div>
     """,
     unsafe_allow_html=True
 )
 
+
 # ============================================================
-# 7. GET UPDATES
+# 12. SEARCH
 # ============================================================
 
-st.subheader("📨 Telegram Updates")
+search_text = st.text_input(
+    "🔎 Search files/posts",
+    placeholder="Movie, video, PDF, etc..."
+)
+
+
+# ============================================================
+# 13. NUMBER OF POSTS
+# ============================================================
+
+limit = st.slider(
+    "Number of posts to load",
+    min_value=20,
+    max_value=500,
+    value=100,
+    step=20
+)
+
+
+# ============================================================
+# 14. MEDIA INFORMATION
+# ============================================================
+
+def get_media_type(message):
+
+    if message.video:
+        return "video"
+
+    if message.document:
+
+        mime = message.document.mime_type or ""
+
+        if mime.startswith("video/"):
+            return "video"
+
+        if mime.startswith("audio/"):
+            return "audio"
+
+        if mime.startswith("image/"):
+            return "image"
+
+        return "document"
+
+    if message.photo:
+        return "photo"
+
+    if message.audio:
+        return "audio"
+
+    return "text"
+
+
+def get_file_name(message):
+
+    if message.file:
+
+        if message.file.name:
+            return message.file.name
+
+        if message.file.ext:
+            return (
+                f"telegram_file"
+                f"{message.file.ext}"
+            )
+
+    media_type = get_media_type(message)
+
+    return f"{media_type}_{message.id}"
+
+
+# ============================================================
+# 15. GET MESSAGES
+# ============================================================
+
+async def get_messages(
+    channel_id,
+    limit_value,
+    search_value
+):
+
+    messages = []
+
+    entity = await client.get_entity(
+        channel_id
+    )
+
+    async for message in client.iter_messages(
+        entity,
+        limit=limit_value,
+        search=search_value if search_value else None
+    ):
+
+        # Skip empty text-only posts
+        if not message.media and not message.text:
+            continue
+
+        messages.append(message)
+
+    return messages
+
 
 try:
 
-    updates_response = requests.get(
-        f"{API_URL}/getUpdates",
-        params={
-            "limit": 100,
-            "timeout": 5
-        },
-        timeout=15
+    messages = run_async(
+        get_messages(
+            selected_channel["id"],
+            limit,
+            search_text
+        )
     )
-
-    updates_data = updates_response.json()
 
 except Exception as e:
 
-    st.error("❌ Could not retrieve Telegram updates")
+    st.error("❌ Messages load nahi ho paaye.")
     st.code(str(e))
     st.stop()
 
+
 # ============================================================
-# 8. DISPLAY UPDATES
+# 16. MESSAGE COUNT
 # ============================================================
 
-if not updates_data.get("ok"):
+st.write(
+    f"**{len(messages)} posts/files found**"
+)
 
-    st.error("❌ Telegram returned an error")
+st.divider()
 
-    st.json(updates_data)
 
-else:
+# ============================================================
+# 17. DOWNLOAD MEDIA
+# ============================================================
 
-    updates = updates_data.get("result", [])
+async def download_media(message):
 
-    if not updates:
+    temp_dir = tempfile.gettempdir()
 
-        st.info(
-            "ℹ️ Abhi koi Telegram update nahi mila."
+    unique = hashlib.md5(
+        f"{message.chat_id}_{message.id}".encode()
+    ).hexdigest()
+
+    original_name = get_file_name(
+        message
+    )
+
+    safe_name = (
+        original_name
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(" ", "_")
+    )
+
+    file_path = os.path.join(
+        temp_dir,
+        f"{unique}_{safe_name}"
+    )
+
+    if os.path.exists(file_path):
+
+        return file_path
+
+    downloaded = await client.download_media(
+        message,
+        file=file_path
+    )
+
+    return downloaded
+
+
+# ============================================================
+# 18. DISPLAY MESSAGE
+# ============================================================
+
+for index, message in enumerate(messages):
+
+    media_type = get_media_type(
+        message
+    )
+
+    file_name = get_file_name(
+        message
+    )
+
+    caption = (
+        message.text
+        or message.message
+        or ""
+    )
+
+    with st.container():
+
+        st.markdown(
+            '<div class="file-card">',
+            unsafe_allow_html=True
         )
 
-        st.write(
-            "Apne Telegram channel me ek naya test post/message "
-            "bhejo aur phir neeche Refresh button dabao."
-        )
+        # ----------------------------------------------------
+        # VIDEO
+        # ----------------------------------------------------
 
-    else:
+        if media_type == "video":
 
-        st.success(
-            f"✅ {len(updates)} update(s) received"
-        )
+            st.markdown(
+                f"""
+                <div class="file-name">
+                    🎬 {file_name}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
-        for update in reversed(updates):
+            if caption:
 
-            # ------------------------------------------------
-            # CHANNEL POST
-            # ------------------------------------------------
-
-            if "channel_post" in update:
-
-                post = update["channel_post"]
-
-                chat = post.get("chat", {})
-
-                channel_title = chat.get(
-                    "title",
-                    "Unknown Channel"
+                st.caption(
+                    caption[:500]
                 )
 
-                channel_id = chat.get(
-                    "id",
-                    "Unknown"
-                )
+            if st.button(
+                f"▶️ Play Video",
+                key=f"video_{message.id}_{index}",
+                use_container_width=True
+            ):
 
-                text = post.get(
-                    "text",
-                    ""
-                )
+                with st.spinner(
+                    "⏳ Video loading..."
+                ):
 
-                caption = post.get(
-                    "caption",
-                    ""
-                )
+                    try:
 
-                message_text = text or caption
-
-                st.markdown(
-                    f"""
-                    <div class="message-box">
-
-                        <div class="message-title">
-                            📢 {channel_title}
-                        </div>
-
-                        <p>
-                            <b>Channel ID:</b> {channel_id}
-                        </p>
-
-                        <p>
-                            <b>Message ID:</b> {post.get("message_id")}
-                        </p>
-
-                        <div class="message-text">
-                            {message_text if message_text else "📎 Media/File message"}
-                        </div>
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-                # --------------------------------------------
-                # PHOTO
-                # --------------------------------------------
-
-                if "photo" in post:
-
-                    photos = post["photo"]
-
-                    if photos:
-
-                        photo = photos[-1]
-
-                        st.info(
-                            f"🖼️ Photo detected | "
-                            f"File ID: {photo.get('file_id')}"
+                        video_path = run_async(
+                            download_media(message)
                         )
 
-                # --------------------------------------------
-                # VIDEO
-                # --------------------------------------------
+                        if video_path:
 
-                if "video" in post:
+                            st.video(
+                                video_path
+                            )
 
-                    video = post["video"]
+                    except Exception as e:
 
-                    st.info(
-                        f"🎬 Video detected | "
-                        f"File ID: {video.get('file_id')}"
-                    )
+                        st.error(
+                            "Video load failed."
+                        )
 
-                # --------------------------------------------
-                # DOCUMENT
-                # --------------------------------------------
+                        st.code(
+                            str(e)
+                        )
 
-                if "document" in post:
 
-                    document = post["document"]
+        # ----------------------------------------------------
+        # PHOTO
+        # ----------------------------------------------------
 
-                    st.info(
-                        f"📄 Document detected | "
-                        f"File: {document.get('file_name', 'Unknown')}"
-                    )
+        elif media_type == "photo":
 
-                # --------------------------------------------
-                # AUDIO
-                # --------------------------------------------
+            st.markdown(
+                f"""
+                <div class="file-name">
+                    🖼️ Image
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
-                if "audio" in post:
+            if st.button(
+                "👁️ Open Image",
+                key=f"photo_{message.id}_{index}",
+                use_container_width=True
+            ):
 
-                    audio = post["audio"]
+                with st.spinner(
+                    "Loading image..."
+                ):
 
-                    st.info(
-                        f"🎵 Audio detected | "
-                        f"File ID: {audio.get('file_id')}"
-                    )
+                    try:
 
-            # ------------------------------------------------
-            # OTHER UPDATE TYPES
-            # ------------------------------------------------
+                        image_path = run_async(
+                            download_media(message)
+                        )
 
-            else:
+                        if image_path:
 
-                st.markdown(
-                    """
-                    <div class="message-box">
-                        <b>ℹ️ Other Telegram update detected</b>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
+                            st.image(
+                                image_path,
+                                use_container_width=True
+                            )
+
+                    except Exception as e:
+
+                        st.error(
+                            "Image load failed."
+                        )
+
+                        st.code(
+                            str(e)
+                        )
+
+
+        # ----------------------------------------------------
+        # AUDIO
+        # ----------------------------------------------------
+
+        elif media_type == "audio":
+
+            st.markdown(
+                f"""
+                <div class="file-name">
+                    🎵 {file_name}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if st.button(
+                "▶️ Play Audio",
+                key=f"audio_{message.id}_{index}",
+                use_container_width=True
+            ):
+
+                with st.spinner(
+                    "Loading audio..."
+                ):
+
+                    try:
+
+                        audio_path = run_async(
+                            download_media(message)
+                        )
+
+                        if audio_path:
+
+                            st.audio(
+                                audio_path
+                            )
+
+                    except Exception as e:
+
+                        st.error(
+                            "Audio load failed."
+                        )
+
+                        st.code(
+                            str(e)
+                        )
+
+
+        # ----------------------------------------------------
+        # DOCUMENT
+        # ----------------------------------------------------
+
+        elif media_type == "document":
+
+            st.markdown(
+                f"""
+                <div class="file-name">
+                    📄 {file_name}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if caption:
+
+                st.caption(
+                    caption[:500]
                 )
 
+            if st.button(
+                "📂 Open File",
+                key=f"doc_{message.id}_{index}",
+                use_container_width=True
+            ):
+
+                with st.spinner(
+                    "Loading file..."
+                ):
+
+                    try:
+
+                        document_path = run_async(
+                            download_media(message)
+                        )
+
+                        if document_path:
+
+                            with open(
+                                document_path,
+                                "rb"
+                            ) as f:
+
+                                file_bytes = f.read()
+
+                            st.download_button(
+                                "⬇️ Download File",
+                                data=file_bytes,
+                                file_name=file_name,
+                                key=f"download_{message.id}_{index}",
+                                use_container_width=True
+                            )
+
+                            # PDF viewer
+                            if file_name.lower().endswith(
+                                ".pdf"
+                            ):
+
+                                import base64
+
+                                encoded = base64.b64encode(
+                                    file_bytes
+                                ).decode()
+
+                                pdf_display = f"""
+                                <iframe
+                                    src="data:application/pdf;base64,{encoded}"
+                                    width="100%"
+                                    height="700"
+                                    style="border:none;">
+                                </iframe>
+                                """
+
+                                st.markdown(
+                                    pdf_display,
+                                    unsafe_allow_html=True
+                                )
+
+                    except Exception as e:
+
+                        st.error(
+                            "File open failed."
+                        )
+
+                        st.code(
+                            str(e)
+                        )
+
+
+        # ----------------------------------------------------
+        # TEXT
+        # ----------------------------------------------------
+
+        else:
+
+            st.markdown(
+                f"""
+                <div class="file-name">
+                    📝 Telegram Post
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if caption:
+
+                st.write(
+                    caption
+                )
+
+        # ----------------------------------------------------
+        # MESSAGE INFO
+        # ----------------------------------------------------
+
+        st.markdown(
+            f"""
+            <div class="file-info">
+                Message ID: {message.id}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+
 # ============================================================
-# 9. REFRESH BUTTON
+# 19. REFRESH
 # ============================================================
 
 st.divider()
 
 if st.button(
-    "🔄 Refresh Telegram Updates",
+    "🔄 Refresh",
     use_container_width=True
 ):
 
     st.rerun()
 
+
 # ============================================================
-# 10. FOOTER
+# 20. FOOTER
 # ============================================================
 
 st.markdown(
     """
-    <br>
     <p style="
         text-align:center;
         color:#666;
-        font-size:13px;
+        margin-top:30px;
     ">
-        Telegram → Bot API → Streamlit
+        Powered by Telegram + Streamlit
     </p>
     """,
     unsafe_allow_html=True
