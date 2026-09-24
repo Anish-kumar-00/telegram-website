@@ -1,92 +1,145 @@
+# ============================================================
+# TELEGRAM WEBSITE - STREAMLIT
+# ============================================================
+
 import os
+import sys
 import asyncio
 import tempfile
-import streamlit as st
+import subprocess
+import html
+import mimetypes
 
-from telethon import TelegramClient
-from telethon.errors import RPCError
+import streamlit as st
 
 
 # ============================================================
-# PAGE CONFIG
+# 1. AUTO INSTALL TELETHON
+# ============================================================
+
+try:
+    import telethon
+except ImportError:
+    subprocess.check_call(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "Telethon==1.41.2",
+        ]
+    )
+
+from telethon import TelegramClient
+from telethon.tl.types import Channel
+
+
+# ============================================================
+# 2. PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
-    page_title="My Telegram Website",
-    page_icon="📱",
+    page_title="Telegram Website",
+    page_icon="📁",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded",
 )
 
 
 # ============================================================
-# CSS
+# 3. CUSTOM CSS
 # ============================================================
 
-st.markdown("""
+st.markdown(
+    """
 <style>
 
+html, body, [class*="css"] {
+    font-family: Arial, sans-serif;
+}
+
 .stApp {
-    background: #080808;
+    background:
+        radial-gradient(circle at 10% 10%, rgba(90, 60, 180, 0.18), transparent 30%),
+        radial-gradient(circle at 90% 20%, rgba(0, 150, 255, 0.12), transparent 30%),
+        #080b12;
     color: white;
 }
 
 .block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
     max-width: 1400px;
-    padding-top: 25px;
 }
 
-.title {
-    text-align: center;
+.hero {
+    padding: 35px;
+    border-radius: 25px;
+    background:
+        linear-gradient(
+            135deg,
+            rgba(25, 35, 70, 0.92),
+            rgba(12, 15, 28, 0.96)
+        );
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 20px 70px rgba(0,0,0,0.35);
+    margin-bottom: 25px;
+}
+
+.hero h1 {
     font-size: 42px;
-    font-weight: 900;
-    margin-bottom: 5px;
+    margin-bottom: 8px;
 }
 
-.subtitle {
-    text-align: center;
-    color: #888;
-    margin-bottom: 30px;
-}
-
-.channel-box {
-    background: linear-gradient(135deg, #191919, #0d0d0d);
-    border: 1px solid #292929;
-    border-radius: 18px;
-    padding: 22px;
-    margin-bottom: 20px;
-}
-
-.channel-title {
-    font-size: 28px;
-    font-weight: 800;
-}
-
-.file-box {
-    background: #151515;
-    border: 1px solid #292929;
-    border-radius: 16px;
-    padding: 18px;
-    margin-bottom: 12px;
-}
-
-.file-title {
+.hero p {
+    color: #b9c0d0;
     font-size: 17px;
-    font-weight: 700;
 }
 
-.file-info {
-    color: #888;
-    font-size: 13px;
-    margin-top: 5px;
+.folder-card {
+    padding: 22px;
+    border-radius: 20px;
+    background: linear-gradient(
+        145deg,
+        rgba(30,35,55,0.95),
+        rgba(14,17,28,0.98)
+    );
+    border: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 15px;
+}
+
+.file-card {
+    padding: 20px;
+    border-radius: 18px;
+    background: rgba(20,24,38,0.95);
+    border: 1px solid rgba(255,255,255,0.08);
+    margin: 12px 0;
+}
+
+.small-text {
+    color: #aeb6c7;
+    font-size: 14px;
+}
+
+.badge {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 20px;
+    background: rgba(80,130,255,0.15);
+    border: 1px solid rgba(80,130,255,0.25);
+    color: #bcd0ff;
+    font-size: 12px;
 }
 
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 # ============================================================
-# SECRETS
+# 4. TELEGRAM SECRETS
 # ============================================================
 
 try:
@@ -94,51 +147,32 @@ try:
     API_HASH = st.secrets["TELEGRAM_API_HASH"]
     BOT_TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
 
-except Exception:
-    st.error("❌ Telegram Secrets missing.")
-
-    st.code("""
-TELEGRAM_API_ID = "YOUR_API_ID"
+except Exception as e:
+    st.error("Telegram Secrets nahi mile.")
+    st.code(
+        """TELEGRAM_API_ID = "YOUR_API_ID"
 TELEGRAM_API_HASH = "YOUR_API_HASH"
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
-""")
-
+TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN" """
+    )
     st.stop()
 
 
 # ============================================================
-# TELEGRAM CLIENT
-# ============================================================
-
-SESSION_PATH = os.path.join(
-    tempfile.gettempdir(),
-    "telegram_streamlit"
-)
-
-client = TelegramClient(
-    SESSION_PATH,
-    API_ID,
-    API_HASH
-)
-
-
-# ============================================================
-# ASYNC RUNNER
+# 5. ASYNC HELPERS
 # ============================================================
 
 def run_async(coro):
-
+    """
+    Streamlit ke andar async Telethon functions safely run karta hai.
+    """
     try:
         loop = asyncio.get_event_loop()
-
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
     if loop.is_running():
-
         new_loop = asyncio.new_event_loop()
-
         try:
             return new_loop.run_until_complete(coro)
         finally:
@@ -148,252 +182,267 @@ def run_async(coro):
 
 
 # ============================================================
-# CONNECT
+# 6. TELEGRAM CLIENT
 # ============================================================
 
-async def connect_telegram():
+SESSION_PATH = os.path.join(
+    tempfile.gettempdir(),
+    "telegram_streamlit_session"
+)
 
-    if not client.is_connected():
-        await client.connect()
 
-    if not await client.is_user_authorized():
-        await client.start(
-            bot_token=BOT_TOKEN
-        )
+async def create_client():
+    client = TelegramClient(
+        SESSION_PATH,
+        API_ID,
+        API_HASH,
+    )
 
-    return True
+    await client.start(
+        bot_token=BOT_TOKEN
+    )
+
+    return client
+
+
+@st.cache_resource
+def get_client():
+    return run_async(create_client())
 
 
 try:
-
-    run_async(
-        connect_telegram()
-    )
+    client = get_client()
 
 except Exception as e:
-
-    st.error("❌ Telegram connection failed")
+    st.error("Telegram connection failed.")
     st.code(str(e))
+    st.info(
+        "Check karo ki API ID, API HASH aur Bot Token Streamlit Secrets me sahi hain."
+    )
     st.stop()
 
 
 # ============================================================
-# GET CHANNELS
+# 7. GET CHANNELS
 # ============================================================
 
-async def load_channels():
-
+async def fetch_channels():
     channels = []
 
     async for dialog in client.iter_dialogs():
 
         entity = dialog.entity
 
-        # Telegram broadcast channel
-        if getattr(entity, "broadcast", False):
+        if isinstance(entity, Channel):
 
-            channels.append({
-                "id": entity.id,
-                "title": getattr(
-                    entity,
-                    "title",
-                    "Unknown Channel"
+            if getattr(entity, "broadcast", False):
+
+                channels.append(
+                    {
+                        "id": entity.id,
+                        "title": dialog.name or "Unnamed Channel",
+                        "username": getattr(
+                            entity,
+                            "username",
+                            None
+                        ),
+                    }
                 )
-            })
 
     return channels
 
 
 try:
-
-    channels = run_async(
-        load_channels()
-    )
+    channels = run_async(fetch_channels())
 
 except Exception as e:
-
-    st.error("❌ Channels load nahi ho paaye.")
+    st.error("Channels load nahi ho pa rahe.")
     st.code(str(e))
     st.stop()
 
 
 # ============================================================
-# HEADER
+# 8. HEADER
 # ============================================================
 
 st.markdown(
-    '<div class="title">📱 My Telegram Website</div>',
-    unsafe_allow_html=True
-)
+    """
+<div class="hero">
 
-st.markdown(
-    '<div class="subtitle">'
-    'Private Telegram Channels'
-    '</div>',
-    unsafe_allow_html=True
+<h1>📁 Telegram Website</h1>
+
+<p>
+Private Telegram Channels ko folders ki tarah browse karein,
+videos play karein aur files/PDFs access karein.
+</p>
+
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
 
 # ============================================================
-# NO CHANNEL
+# 9. NO CHANNEL
 # ============================================================
 
 if not channels:
 
     st.warning(
-        "⚠️ Koi channel nahi mila."
+        "Koi Telegram channel nahi mila."
     )
 
     st.info(
-        "Confirm karo ki bot tumhare private channel "
-        "me added hai aur required permissions rakhta hai."
+        "Make sure bot ko required channel me add kiya gaya hai."
     )
 
     st.stop()
 
 
 # ============================================================
-# SIDEBAR CHANNEL LIST
+# 10. SIDEBAR - FOLDERS
 # ============================================================
 
-st.sidebar.title("📁 My Channels")
+st.sidebar.title("📁 Channels")
 
-channel_titles = [
-    c["title"]
-    for c in channels
+st.sidebar.caption(
+    f"{len(channels)} channel(s) available"
+)
+
+
+channel_names = [
+    channel["title"]
+    for channel in channels
 ]
 
-selected_title = st.sidebar.selectbox(
-    "Channel select karo",
-    channel_titles
+
+selected_name = st.sidebar.radio(
+    "Open Folder",
+    channel_names,
 )
 
+
 selected_channel = next(
-    c for c in channels
-    if c["title"] == selected_title
+    (
+        channel
+        for channel in channels
+        if channel["title"] == selected_name
+    ),
+    None,
 )
 
 
 # ============================================================
-# CHANNEL HEADER
+# 11. MAIN FOLDER HEADER
 # ============================================================
 
 st.markdown(
     f"""
-    <div class="channel-box">
-        <div class="channel-title">
-            📁 {selected_channel["title"]}
-        </div>
-        <div class="file-info">
-            Telegram Channel
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
+<div class="folder-card">
+
+<h2>📂 {html.escape(selected_channel["title"])}</h2>
+
+<span class="badge">
+Telegram Channel
+</span>
+
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
 
 # ============================================================
-# SEARCH
+# 12. SEARCH + LIMIT
 # ============================================================
 
-search = st.text_input(
-    "🔎 Search",
-    placeholder="Search video, file, PDF, post..."
+col1, col2 = st.columns(
+    [4, 1]
 )
 
+with col1:
+
+    search_text = st.text_input(
+        "🔎 Search",
+        placeholder="Message ya file search karein...",
+    )
+
+with col2:
+
+    message_limit = st.number_input(
+        "Messages",
+        min_value=10,
+        max_value=500,
+        value=100,
+        step=10,
+    )
+
 
 # ============================================================
-# LIMIT
+# 13. GET MESSAGES
 # ============================================================
 
-limit = st.select_slider(
-    "Posts load karo",
-    options=[
-        20,
-        50,
-        100,
-        200,
-        500
-    ],
-    value=100
-)
-
-
-# ============================================================
-# GET MESSAGES
-# ============================================================
-
-async def load_messages(
+async def fetch_messages(
     channel_id,
-    limit_value,
-    search_value
+    limit,
+    search=None,
 ):
 
-    entity = await client.get_entity(
-        channel_id
-    )
-
-    result = []
+    messages = []
 
     async for message in client.iter_messages(
-        entity,
-        limit=limit_value,
-        search=search_value or None
+        channel_id,
+        limit=limit,
+        search=search if search else None,
     ):
 
-        if message.media or message.text:
+        messages.append(message)
 
-            result.append(message)
-
-    return result
+    return messages
 
 
-try:
+with st.spinner("Telegram se files load ho rahi hain..."):
 
-    messages = run_async(
-        load_messages(
-            selected_channel["id"],
-            limit,
-            search
+    try:
+
+        messages = run_async(
+            fetch_messages(
+                selected_channel["id"],
+                int(message_limit),
+                search_text.strip() or None,
+            )
         )
-    )
 
-except RPCError as e:
+    except Exception as e:
 
-    st.error(
-        "❌ Telegram API error"
-    )
-
-    st.code(str(e))
-    st.stop()
-
-except Exception as e:
-
-    st.error(
-        "❌ Messages load nahi ho paaye."
-    )
-
-    st.code(str(e))
-    st.stop()
+        st.error("Messages load nahi ho pa rahe.")
+        st.code(str(e))
+        st.stop()
 
 
 # ============================================================
-# COUNT
+# 14. MESSAGE COUNT
 # ============================================================
 
-st.write(
-    f"**{len(messages)} items found**"
+st.caption(
+    f"📦 {len(messages)} item(s) found"
 )
 
-st.divider()
+
+if not messages:
+
+    st.info(
+        "Is channel me koi matching message nahi mila."
+    )
+
+    st.stop()
 
 
 # ============================================================
-# MEDIA TYPE
+# 15. MEDIA TYPE
 # ============================================================
 
-def media_type(message):
+def get_media_type(message):
 
     if message.video:
         return "video"
@@ -406,394 +455,579 @@ def media_type(message):
 
     if message.document:
 
+        filename = ""
+
+        if message.file:
+            filename = (
+                message.file.name or ""
+            ).lower()
+
         mime = (
-            message.document.mime_type
-            or ""
+            message.file.mime_type
+            if message.file
+            else ""
         )
 
-        if mime.startswith("video/"):
-            return "video"
+        if mime == "application/pdf":
+            return "pdf"
 
-        if mime.startswith("audio/"):
-            return "audio"
-
-        if mime.startswith("image/"):
-            return "photo"
+        if filename.endswith(".pdf"):
+            return "pdf"
 
         return "document"
 
-    return "text"
+    if message.text:
+        return "text"
+
+    return "other"
 
 
 # ============================================================
-# FILE NAME
+# 16. DOWNLOAD MEDIA
 # ============================================================
 
-def get_name(message):
+async def download_message_media(
+    message,
+    folder,
+):
 
-    if message.file:
-
-        if message.file.name:
-            return message.file.name
-
-        if message.file.ext:
-            return (
-                f"Telegram_File"
-                f"{message.file.ext}"
-            )
-
-    return f"Telegram_Message_{message.id}"
-
-
-# ============================================================
-# DOWNLOAD
-# ============================================================
-
-async def download_message(message):
-
-    folder = tempfile.gettempdir()
-
-    filename = get_name(message)
-
-    safe_filename = (
-        filename
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "_")
-    )
-
-    path = os.path.join(
+    os.makedirs(
         folder,
-        f"{message.chat_id}_{message.id}_{safe_filename}"
+        exist_ok=True
     )
 
-    if os.path.exists(path):
-
-        return path
-
-    result = await client.download_media(
+    path = await client.download_media(
         message,
-        file=path
+        file=folder,
     )
 
-    return result
+    return path
 
 
 # ============================================================
-# DISPLAY ITEMS
+# 17. DISPLAY MESSAGES
 # ============================================================
 
-for number, message in enumerate(messages):
+for index, message in enumerate(messages):
 
-    kind = media_type(message)
+    media_type = get_media_type(message)
 
-    filename = get_name(message)
+    message_text = (
+        message.text or ""
+    ).strip()
 
-    caption = (
-        message.text
-        or ""
-    )
+    message_date = ""
 
-    st.markdown(
-        '<div class="file-box">',
-        unsafe_allow_html=True
-    )
+    if message.date:
+
+        try:
+            message_date = message.date.strftime(
+                "%d %b %Y • %I:%M %p"
+            )
+        except Exception:
+            message_date = str(message.date)
 
 
-    # ========================================================
-    # VIDEO
-    # ========================================================
+    # --------------------------------------------------------
+    # TEXT MESSAGE
+    # --------------------------------------------------------
 
-    if kind == "video":
+    if media_type == "text":
 
         st.markdown(
-            f"""
-            <div class="file-title">
-                🎬 {filename}
-            </div>
-            """,
-            unsafe_allow_html=True
+            '<div class="file-card">',
+            unsafe_allow_html=True,
         )
 
-        if caption:
-            st.caption(
-                caption[:500]
+        st.markdown(
+            f"### 💬 Message"
+        )
+
+        st.write(message_text)
+
+        if message_date:
+            st.caption(message_date)
+
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        continue
+
+
+    # --------------------------------------------------------
+    # OTHER
+    # --------------------------------------------------------
+
+    if media_type == "other":
+
+        if not message_text:
+            continue
+
+        st.markdown(
+            '<div class="file-card">',
+            unsafe_allow_html=True,
+        )
+
+        st.write(message_text)
+
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        continue
+
+
+    # --------------------------------------------------------
+    # MEDIA CARD
+    # --------------------------------------------------------
+
+    with st.container():
+
+        st.markdown(
+            '<div class="file-card">',
+            unsafe_allow_html=True,
+        )
+
+        # File name
+        filename = "Telegram File"
+
+        if message.file:
+
+            filename = (
+                message.file.name
+                or filename
             )
 
-        if st.button(
-            "▶️ Play Video",
-            key=f"play_{message.id}_{number}",
-            use_container_width=True
-        ):
+        # Title
+        if media_type == "video":
+            icon = "🎬"
+
+        elif media_type == "photo":
+            icon = "🖼️"
+
+        elif media_type == "audio":
+            icon = "🎵"
+
+        elif media_type == "pdf":
+            icon = "📕"
+
+        else:
+            icon = "📄"
+
+
+        st.markdown(
+            f"### {icon} {html.escape(filename)}"
+        )
+
+
+        if message_date:
+
+            st.caption(
+                message_date
+            )
+
+
+        # ----------------------------------------------------
+        # VIDEO
+        # ----------------------------------------------------
+
+        if media_type == "video":
+
+            temp_folder = tempfile.mkdtemp(
+                prefix="telegram_video_"
+            )
 
             with st.spinner(
-                "⏳ Video loading..."
+                "Video loading..."
             ):
 
                 try:
 
                     video_path = run_async(
-                        download_message(message)
+                        download_message_media(
+                            message,
+                            temp_folder,
+                        )
                     )
 
-                    if video_path:
+                    if video_path and os.path.exists(
+                        video_path
+                    ):
+
                         st.video(
                             video_path
+                        )
+
+                        with open(
+                            video_path,
+                            "rb"
+                        ) as video_file:
+
+                            st.download_button(
+                                "⬇️ Download Video",
+                                data=video_file,
+                                file_name=os.path.basename(
+                                    video_path
+                                ),
+                                mime=(
+                                    message.file.mime_type
+                                    if message.file
+                                    and message.file.mime_type
+                                    else "video/mp4"
+                                ),
+                                key=f"video_{message.id}",
+                            )
+
+                    else:
+
+                        st.warning(
+                            "Video download nahi ho paya."
                         )
 
                 except Exception as e:
 
                     st.error(
-                        "Video load failed."
+                        "Video load nahi ho paya."
                     )
 
-                    st.code(
+                    st.caption(
                         str(e)
                     )
 
 
-    # ========================================================
-    # PHOTO
-    # ========================================================
+        # ----------------------------------------------------
+        # PHOTO
+        # ----------------------------------------------------
 
-    elif kind == "photo":
+        elif media_type == "photo":
 
-        st.markdown(
-            f"""
-            <div class="file-title">
-                🖼️ Image
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        if st.button(
-            "👁️ Open Image",
-            key=f"image_{message.id}_{number}",
-            use_container_width=True
-        ):
+            temp_folder = tempfile.mkdtemp(
+                prefix="telegram_photo_"
+            )
 
             with st.spinner(
-                "Loading image..."
+                "Image loading..."
             ):
 
                 try:
 
                     image_path = run_async(
-                        download_message(message)
+                        download_message_media(
+                            message,
+                            temp_folder,
+                        )
                     )
 
                     if image_path:
 
                         st.image(
                             image_path,
-                            use_container_width=True
+                            use_container_width=True,
                         )
-
-                except Exception as e:
-
-                    st.error(
-                        "Image load failed."
-                    )
-
-                    st.code(
-                        str(e)
-                    )
-
-
-    # ========================================================
-    # AUDIO
-    # ========================================================
-
-    elif kind == "audio":
-
-        st.markdown(
-            f"""
-            <div class="file-title">
-                🎵 {filename}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        if st.button(
-            "▶️ Play Audio",
-            key=f"audio_{message.id}_{number}",
-            use_container_width=True
-        ):
-
-            with st.spinner(
-                "Loading audio..."
-            ):
-
-                try:
-
-                    audio_path = run_async(
-                        download_message(message)
-                    )
-
-                    if audio_path:
-
-                        st.audio(
-                            audio_path
-                        )
-
-                except Exception as e:
-
-                    st.error(
-                        "Audio load failed."
-                    )
-
-                    st.code(
-                        str(e)
-                    )
-
-
-    # ========================================================
-    # DOCUMENT / FILE
-    # ========================================================
-
-    elif kind == "document":
-
-        st.markdown(
-            f"""
-            <div class="file-title">
-                📄 {filename}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        if caption:
-            st.caption(
-                caption[:500]
-            )
-
-        if st.button(
-            "📂 Open File",
-            key=f"file_{message.id}_{number}",
-            use_container_width=True
-        ):
-
-            with st.spinner(
-                "⏳ File loading..."
-            ):
-
-                try:
-
-                    file_path = run_async(
-                        download_message(message)
-                    )
-
-                    if file_path:
 
                         with open(
-                            file_path,
+                            image_path,
                             "rb"
-                        ) as file:
+                        ) as image_file:
 
-                            data = file.read()
-
-                        st.download_button(
-                            "⬇️ Download File",
-                            data=data,
-                            file_name=filename,
-                            key=f"download_{message.id}_{number}",
-                            use_container_width=True
-                        )
-
-                        # PDF viewer
-                        if filename.lower().endswith(
-                            ".pdf"
-                        ):
-
-                            import base64
-
-                            encoded = base64.b64encode(
-                                data
-                            ).decode()
-
-                            st.markdown(
-                                f"""
-                                <iframe
-                                    src="data:application/pdf;base64,{encoded}"
-                                    width="100%"
-                                    height="700"
-                                    style="border:none;">
-                                </iframe>
-                                """,
-                                unsafe_allow_html=True
+                            st.download_button(
+                                "⬇️ Download Image",
+                                data=image_file,
+                                file_name=os.path.basename(
+                                    image_path
+                                ),
+                                mime="image/jpeg",
+                                key=f"photo_{message.id}",
                             )
 
                 except Exception as e:
 
                     st.error(
-                        "File load failed."
+                        "Image load nahi ho payi."
                     )
 
-                    st.code(
+                    st.caption(
                         str(e)
                     )
 
 
-    # ========================================================
-    # TEXT POST
-    # ========================================================
+        # ----------------------------------------------------
+        # AUDIO
+        # ----------------------------------------------------
 
-    else:
+        elif media_type == "audio":
 
-        st.markdown(
-            """
-            <div class="file-title">
-                📝 Telegram Post
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+            temp_folder = tempfile.mkdtemp(
+                prefix="telegram_audio_"
+            )
 
-        if caption:
+            with st.spinner(
+                "Audio loading..."
+            ):
+
+                try:
+
+                    audio_path = run_async(
+                        download_message_media(
+                            message,
+                            temp_folder,
+                        )
+                    )
+
+                    if audio_path:
+
+                        mime_type = (
+                            message.file.mime_type
+                            if message.file
+                            and message.file.mime_type
+                            else "audio/mpeg"
+                        )
+
+                        st.audio(
+                            audio_path,
+                            format=mime_type,
+                        )
+
+                        with open(
+                            audio_path,
+                            "rb"
+                        ) as audio_file:
+
+                            st.download_button(
+                                "⬇️ Download Audio",
+                                data=audio_file,
+                                file_name=os.path.basename(
+                                    audio_path
+                                ),
+                                mime=mime_type,
+                                key=f"audio_{message.id}",
+                            )
+
+                except Exception as e:
+
+                    st.error(
+                        "Audio load nahi ho paya."
+                    )
+
+                    st.caption(
+                        str(e)
+                    )
+
+
+        # ----------------------------------------------------
+        # PDF
+        # ----------------------------------------------------
+
+        elif media_type == "pdf":
+
+            temp_folder = tempfile.mkdtemp(
+                prefix="telegram_pdf_"
+            )
+
+            with st.spinner(
+                "PDF loading..."
+            ):
+
+                try:
+
+                    pdf_path = run_async(
+                        download_message_media(
+                            message,
+                            temp_folder,
+                        )
+                    )
+
+                    if pdf_path:
+
+                        with open(
+                            pdf_path,
+                            "rb"
+                        ) as pdf_file:
+
+                            pdf_data = pdf_file.read()
+
+
+                        # PDF viewer
+                        import base64
+
+                        pdf_base64 = base64.b64encode(
+                            pdf_data
+                        ).decode("utf-8")
+
+
+                        pdf_html = f"""
+                        <iframe
+                            src="data:application/pdf;base64,{pdf_base64}"
+                            width="100%"
+                            height="700"
+                            style="
+                                border:none;
+                                border-radius:15px;
+                                background:#111;
+                            "
+                        >
+                        </iframe>
+                        """
+
+                        st.components.v1.html(
+                            pdf_html,
+                            height=720,
+                        )
+
+
+                        st.download_button(
+                            "⬇️ Download PDF",
+                            data=pdf_data,
+                            file_name=(
+                                filename
+                                if filename.lower().endswith(
+                                    ".pdf"
+                                )
+                                else filename + ".pdf"
+                            ),
+                            mime="application/pdf",
+                            key=f"pdf_{message.id}",
+                        )
+
+                except Exception as e:
+
+                    st.error(
+                        "PDF load nahi ho paya."
+                    )
+
+                    st.caption(
+                        str(e)
+                    )
+
+
+        # ----------------------------------------------------
+        # OTHER DOCUMENT
+        # ----------------------------------------------------
+
+        elif media_type == "document":
+
+            temp_folder = tempfile.mkdtemp(
+                prefix="telegram_document_"
+            )
+
+            with st.spinner(
+                "File loading..."
+            ):
+
+                try:
+
+                    file_path = run_async(
+                        download_message_media(
+                            message,
+                            temp_folder,
+                        )
+                    )
+
+                    if file_path:
+
+                        mime_type = (
+                            message.file.mime_type
+                            if message.file
+                            and message.file.mime_type
+                            else (
+                                mimetypes.guess_type(
+                                    file_path
+                                )[0]
+                                or "application/octet-stream"
+                            )
+                        )
+
+
+                        # Try browser-friendly files
+                        if mime_type.startswith(
+                            "text/"
+                        ):
+
+                            try:
+
+                                with open(
+                                    file_path,
+                                    "r",
+                                    encoding="utf-8",
+                                    errors="ignore",
+                                ) as f:
+
+                                    content = f.read()
+
+                                st.code(
+                                    content,
+                                    language="text",
+                                )
+
+                            except Exception:
+                                pass
+
+
+                        with open(
+                            file_path,
+                            "rb"
+                        ) as file_data:
+
+                            st.download_button(
+                                "⬇️ Download File",
+                                data=file_data,
+                                file_name=os.path.basename(
+                                    file_path
+                                ),
+                                mime=mime_type,
+                                key=f"file_{message.id}",
+                            )
+
+                except Exception as e:
+
+                    st.error(
+                        "File load nahi ho payi."
+                    )
+
+                    st.caption(
+                        str(e)
+                    )
+
+
+        # ----------------------------------------------------
+        # CAPTION
+        # ----------------------------------------------------
+
+        if message_text:
+
+            st.markdown(
+                "**Caption:**"
+            )
 
             st.write(
-                caption
-            )
-
-        else:
-
-            st.caption(
-                "Empty Telegram post"
+                message_text
             )
 
 
-    # ========================================================
-    # MESSAGE ID
-    # ========================================================
-
-    st.markdown(
-        f"""
-        <div class="file-info">
-            Message ID: {message.id}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        "</div>",
-        unsafe_allow_html=True
-    )
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ============================================================
-# REFRESH
+# 18. FOOTER
 # ============================================================
 
-st.divider()
+st.markdown(
+    """
+<hr>
 
-if st.button(
-    "🔄 Refresh Channels",
-    use_container_width=True
-):
+<center>
 
-    st.cache_data.clear()
-    st.rerun()
+<span style="color:#777;">
+Telegram Website • Powered by Streamlit & Telegram API
+</span>
 
+</center>
+""",
+    unsafe_allow_html=True,
+)
