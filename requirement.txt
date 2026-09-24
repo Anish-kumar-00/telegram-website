@@ -1,2 +1,2 @@
-streamlit
-Telethon
+streamlit==1.64.0
+Telethon==1.41.2
