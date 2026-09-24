@@ -1,15 +1,14 @@
 import os
-import tempfile
 import asyncio
-import hashlib
-
+import tempfile
 import streamlit as st
+
 from telethon import TelegramClient
 from telethon.errors import RPCError
 
 
 # ============================================================
-# 1. PAGE CONFIG
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
@@ -21,7 +20,7 @@ st.set_page_config(
 
 
 # ============================================================
-# 2. CSS
+# CSS
 # ============================================================
 
 st.markdown("""
@@ -32,42 +31,46 @@ st.markdown("""
     color: white;
 }
 
-.main-title {
+.block-container {
+    max-width: 1400px;
+    padding-top: 25px;
+}
+
+.title {
     text-align: center;
     font-size: 42px;
-    font-weight: 800;
-    margin-top: 15px;
+    font-weight: 900;
     margin-bottom: 5px;
 }
 
 .subtitle {
     text-align: center;
-    color: #999;
+    color: #888;
     margin-bottom: 30px;
 }
 
-.channel-card {
-    background: linear-gradient(145deg, #171717, #0d0d0d);
+.channel-box {
+    background: linear-gradient(135deg, #191919, #0d0d0d);
     border: 1px solid #292929;
     border-radius: 18px;
     padding: 22px;
-    margin: 10px 0;
+    margin-bottom: 20px;
 }
 
-.channel-name {
-    font-size: 24px;
+.channel-title {
+    font-size: 28px;
     font-weight: 800;
 }
 
-.file-card {
-    background: #141414;
+.file-box {
+    background: #151515;
     border: 1px solid #292929;
-    border-radius: 15px;
-    padding: 16px;
-    margin: 8px 0;
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 12px;
 }
 
-.file-name {
+.file-title {
     font-size: 17px;
     font-weight: 700;
 }
@@ -75,6 +78,7 @@ st.markdown("""
 .file-info {
     color: #888;
     font-size: 13px;
+    margin-top: 5px;
 }
 
 </style>
@@ -82,7 +86,7 @@ st.markdown("""
 
 
 # ============================================================
-# 3. SECRETS
+# SECRETS
 # ============================================================
 
 try:
@@ -103,54 +107,56 @@ TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
 
 
 # ============================================================
-# 4. TELEGRAM CLIENT
+# TELEGRAM CLIENT
 # ============================================================
 
-SESSION_FILE = "telegram_streamlit_bot"
+SESSION_PATH = os.path.join(
+    tempfile.gettempdir(),
+    "telegram_streamlit"
+)
 
 client = TelegramClient(
-    SESSION_FILE,
+    SESSION_PATH,
     API_ID,
     API_HASH
 )
 
 
 # ============================================================
-# 5. ASYNC HELPER
+# ASYNC RUNNER
 # ============================================================
 
 def run_async(coro):
-    """
-    Run async Telegram operations safely.
-    """
+
     try:
         loop = asyncio.get_event_loop()
 
-        if loop.is_running():
-            new_loop = asyncio.new_event_loop()
-
-            try:
-                return new_loop.run_until_complete(coro)
-            finally:
-                new_loop.close()
-
-        return loop.run_until_complete(coro)
-
     except RuntimeError:
-        return asyncio.run(coro)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_running():
+
+        new_loop = asyncio.new_event_loop()
+
+        try:
+            return new_loop.run_until_complete(coro)
+        finally:
+            new_loop.close()
+
+    return loop.run_until_complete(coro)
 
 
 # ============================================================
-# 6. CONNECT TELEGRAM
+# CONNECT
 # ============================================================
 
-async def connect_client():
+async def connect_telegram():
 
     if not client.is_connected():
         await client.connect()
 
     if not await client.is_user_authorized():
-
         await client.start(
             bot_token=BOT_TOKEN
         )
@@ -160,7 +166,9 @@ async def connect_client():
 
 try:
 
-    run_async(connect_client())
+    run_async(
+        connect_telegram()
+    )
 
 except Exception as e:
 
@@ -170,41 +178,36 @@ except Exception as e:
 
 
 # ============================================================
-# 7. GET CHANNELS
+# GET CHANNELS
 # ============================================================
 
-async def get_channels():
+async def load_channels():
 
-    result = []
+    channels = []
 
     async for dialog in client.iter_dialogs():
 
         entity = dialog.entity
 
-        # Only channels
+        # Telegram broadcast channel
         if getattr(entity, "broadcast", False):
 
-            result.append({
+            channels.append({
                 "id": entity.id,
                 "title": getattr(
                     entity,
                     "title",
                     "Unknown Channel"
-                ),
-                "username": getattr(
-                    entity,
-                    "username",
-                    None
                 )
             })
 
-    return result
+    return channels
 
 
 try:
 
     channels = run_async(
-        get_channels()
+        load_channels()
     )
 
 except Exception as e:
@@ -215,72 +218,70 @@ except Exception as e:
 
 
 # ============================================================
-# 8. HEADER
+# HEADER
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">📱 My Telegram Website</div>',
+    '<div class="title">📱 My Telegram Website</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
     '<div class="subtitle">'
-    'Your Private Telegram Channels'
+    'Private Telegram Channels'
     '</div>',
     unsafe_allow_html=True
 )
 
 
 # ============================================================
-# 9. CHANNEL CHECK
+# NO CHANNEL
 # ============================================================
 
 if not channels:
 
     st.warning(
-        "⚠️ Koi Telegram channel nahi mila."
+        "⚠️ Koi channel nahi mila."
     )
 
     st.info(
-        "Check karo ki bot ko tumhare private channels "
-        "me required access diya gaya hai."
+        "Confirm karo ki bot tumhare private channel "
+        "me added hai aur required permissions rakhta hai."
     )
 
     st.stop()
 
 
 # ============================================================
-# 10. SIDEBAR
+# SIDEBAR CHANNEL LIST
 # ============================================================
 
-st.sidebar.title("📁 Channels")
+st.sidebar.title("📁 My Channels")
 
-channel_names = [
-    channel["title"]
-    for channel in channels
+channel_titles = [
+    c["title"]
+    for c in channels
 ]
 
-selected_channel_name = st.sidebar.selectbox(
-    "Select Channel",
-    channel_names
+selected_title = st.sidebar.selectbox(
+    "Channel select karo",
+    channel_titles
 )
 
-
 selected_channel = next(
-    channel
-    for channel in channels
-    if channel["title"] == selected_channel_name
+    c for c in channels
+    if c["title"] == selected_title
 )
 
 
 # ============================================================
-# 11. CHANNEL HEADER
+# CHANNEL HEADER
 # ============================================================
 
 st.markdown(
     f"""
-    <div class="channel-card">
-        <div class="channel-name">
+    <div class="channel-box">
+        <div class="channel-title">
             📁 {selected_channel["title"]}
         </div>
         <div class="file-info">
@@ -293,40 +294,122 @@ st.markdown(
 
 
 # ============================================================
-# 12. SEARCH
+# SEARCH
 # ============================================================
 
-search_text = st.text_input(
-    "🔎 Search files/posts",
-    placeholder="Movie, video, PDF, etc..."
+search = st.text_input(
+    "🔎 Search",
+    placeholder="Search video, file, PDF, post..."
 )
 
 
 # ============================================================
-# 13. NUMBER OF POSTS
+# LIMIT
 # ============================================================
 
-limit = st.slider(
-    "Number of posts to load",
-    min_value=20,
-    max_value=500,
-    value=100,
-    step=20
+limit = st.select_slider(
+    "Posts load karo",
+    options=[
+        20,
+        50,
+        100,
+        200,
+        500
+    ],
+    value=100
 )
 
 
 # ============================================================
-# 14. MEDIA INFORMATION
+# GET MESSAGES
 # ============================================================
 
-def get_media_type(message):
+async def load_messages(
+    channel_id,
+    limit_value,
+    search_value
+):
+
+    entity = await client.get_entity(
+        channel_id
+    )
+
+    result = []
+
+    async for message in client.iter_messages(
+        entity,
+        limit=limit_value,
+        search=search_value or None
+    ):
+
+        if message.media or message.text:
+
+            result.append(message)
+
+    return result
+
+
+try:
+
+    messages = run_async(
+        load_messages(
+            selected_channel["id"],
+            limit,
+            search
+        )
+    )
+
+except RPCError as e:
+
+    st.error(
+        "❌ Telegram API error"
+    )
+
+    st.code(str(e))
+    st.stop()
+
+except Exception as e:
+
+    st.error(
+        "❌ Messages load nahi ho paaye."
+    )
+
+    st.code(str(e))
+    st.stop()
+
+
+# ============================================================
+# COUNT
+# ============================================================
+
+st.write(
+    f"**{len(messages)} items found**"
+)
+
+st.divider()
+
+
+# ============================================================
+# MEDIA TYPE
+# ============================================================
+
+def media_type(message):
 
     if message.video:
         return "video"
 
+    if message.photo:
+        return "photo"
+
+    if message.audio:
+        return "audio"
+
     if message.document:
 
-        mime = message.document.mime_type or ""
+        mime = (
+            message.document.mime_type
+            or ""
+        )
 
         if mime.startswith("video/"):
             return "video"
@@ -335,20 +418,18 @@ def get_media_type(message):
             return "audio"
 
         if mime.startswith("image/"):
-            return "image"
+            return "photo"
 
         return "document"
-
-    if message.photo:
-        return "photo"
-
-    if message.audio:
-        return "audio"
 
     return "text"
 
 
-def get_file_name(message):
+# ============================================================
+# FILE NAME
+# ============================================================
+
+def get_name(message):
 
     if message.file:
 
@@ -357,449 +438,383 @@ def get_file_name(message):
 
         if message.file.ext:
             return (
-                f"telegram_file"
+                f"Telegram_File"
                 f"{message.file.ext}"
             )
 
-    media_type = get_media_type(message)
-
-    return f"{media_type}_{message.id}"
+    return f"Telegram_Message_{message.id}"
 
 
 # ============================================================
-# 15. GET MESSAGES
+# DOWNLOAD
 # ============================================================
 
-async def get_messages(
-    channel_id,
-    limit_value,
-    search_value
-):
+async def download_message(message):
 
-    messages = []
+    folder = tempfile.gettempdir()
 
-    entity = await client.get_entity(
-        channel_id
-    )
+    filename = get_name(message)
 
-    async for message in client.iter_messages(
-        entity,
-        limit=limit_value,
-        search=search_value if search_value else None
-    ):
-
-        # Skip empty text-only posts
-        if not message.media and not message.text:
-            continue
-
-        messages.append(message)
-
-    return messages
-
-
-try:
-
-    messages = run_async(
-        get_messages(
-            selected_channel["id"],
-            limit,
-            search_text
-        )
-    )
-
-except Exception as e:
-
-    st.error("❌ Messages load nahi ho paaye.")
-    st.code(str(e))
-    st.stop()
-
-
-# ============================================================
-# 16. MESSAGE COUNT
-# ============================================================
-
-st.write(
-    f"**{len(messages)} posts/files found**"
-)
-
-st.divider()
-
-
-# ============================================================
-# 17. DOWNLOAD MEDIA
-# ============================================================
-
-async def download_media(message):
-
-    temp_dir = tempfile.gettempdir()
-
-    unique = hashlib.md5(
-        f"{message.chat_id}_{message.id}".encode()
-    ).hexdigest()
-
-    original_name = get_file_name(
-        message
-    )
-
-    safe_name = (
-        original_name
+    safe_filename = (
+        filename
         .replace("/", "_")
         .replace("\\", "_")
-        .replace(" ", "_")
+        .replace(":", "_")
     )
 
-    file_path = os.path.join(
-        temp_dir,
-        f"{unique}_{safe_name}"
+    path = os.path.join(
+        folder,
+        f"{message.chat_id}_{message.id}_{safe_filename}"
     )
 
-    if os.path.exists(file_path):
+    if os.path.exists(path):
 
-        return file_path
+        return path
 
-    downloaded = await client.download_media(
+    result = await client.download_media(
         message,
-        file=file_path
+        file=path
     )
 
-    return downloaded
+    return result
 
 
 # ============================================================
-# 18. DISPLAY MESSAGE
+# DISPLAY ITEMS
 # ============================================================
 
-for index, message in enumerate(messages):
+for number, message in enumerate(messages):
 
-    media_type = get_media_type(
-        message
-    )
+    kind = media_type(message)
 
-    file_name = get_file_name(
-        message
-    )
+    filename = get_name(message)
 
     caption = (
         message.text
-        or message.message
         or ""
     )
 
-    with st.container():
+    st.markdown(
+        '<div class="file-box">',
+        unsafe_allow_html=True
+    )
+
+
+    # ========================================================
+    # VIDEO
+    # ========================================================
+
+    if kind == "video":
 
         st.markdown(
-            '<div class="file-card">',
+            f"""
+            <div class="file-title">
+                🎬 {filename}
+            </div>
+            """,
             unsafe_allow_html=True
         )
 
-        # ----------------------------------------------------
-        # VIDEO
-        # ----------------------------------------------------
-
-        if media_type == "video":
-
-            st.markdown(
-                f"""
-                <div class="file-name">
-                    🎬 {file_name}
-                </div>
-                """,
-                unsafe_allow_html=True
+        if caption:
+            st.caption(
+                caption[:500]
             )
 
-            if caption:
+        if st.button(
+            "▶️ Play Video",
+            key=f"play_{message.id}_{number}",
+            use_container_width=True
+        ):
 
-                st.caption(
-                    caption[:500]
-                )
-
-            if st.button(
-                f"▶️ Play Video",
-                key=f"video_{message.id}_{index}",
-                use_container_width=True
+            with st.spinner(
+                "⏳ Video loading..."
             ):
 
-                with st.spinner(
-                    "⏳ Video loading..."
-                ):
+                try:
 
-                    try:
+                    video_path = run_async(
+                        download_message(message)
+                    )
 
-                        video_path = run_async(
-                            download_media(message)
+                    if video_path:
+                        st.video(
+                            video_path
                         )
 
-                        if video_path:
+                except Exception as e:
 
-                            st.video(
-                                video_path
-                            )
+                    st.error(
+                        "Video load failed."
+                    )
 
-                    except Exception as e:
+                    st.code(
+                        str(e)
+                    )
 
-                        st.error(
-                            "Video load failed."
+
+    # ========================================================
+    # PHOTO
+    # ========================================================
+
+    elif kind == "photo":
+
+        st.markdown(
+            f"""
+            <div class="file-title">
+                🖼️ Image
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        if st.button(
+            "👁️ Open Image",
+            key=f"image_{message.id}_{number}",
+            use_container_width=True
+        ):
+
+            with st.spinner(
+                "Loading image..."
+            ):
+
+                try:
+
+                    image_path = run_async(
+                        download_message(message)
+                    )
+
+                    if image_path:
+
+                        st.image(
+                            image_path,
+                            use_container_width=True
                         )
 
-                        st.code(
-                            str(e)
+                except Exception as e:
+
+                    st.error(
+                        "Image load failed."
+                    )
+
+                    st.code(
+                        str(e)
+                    )
+
+
+    # ========================================================
+    # AUDIO
+    # ========================================================
+
+    elif kind == "audio":
+
+        st.markdown(
+            f"""
+            <div class="file-title">
+                🎵 {filename}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        if st.button(
+            "▶️ Play Audio",
+            key=f"audio_{message.id}_{number}",
+            use_container_width=True
+        ):
+
+            with st.spinner(
+                "Loading audio..."
+            ):
+
+                try:
+
+                    audio_path = run_async(
+                        download_message(message)
+                    )
+
+                    if audio_path:
+
+                        st.audio(
+                            audio_path
                         )
 
+                except Exception as e:
 
-        # ----------------------------------------------------
-        # PHOTO
-        # ----------------------------------------------------
+                    st.error(
+                        "Audio load failed."
+                    )
 
-        elif media_type == "photo":
+                    st.code(
+                        str(e)
+                    )
 
-            st.markdown(
-                f"""
-                <div class="file-name">
-                    🖼️ Image
-                </div>
-                """,
-                unsafe_allow_html=True
+
+    # ========================================================
+    # DOCUMENT / FILE
+    # ========================================================
+
+    elif kind == "document":
+
+        st.markdown(
+            f"""
+            <div class="file-title">
+                📄 {filename}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        if caption:
+            st.caption(
+                caption[:500]
             )
 
-            if st.button(
-                "👁️ Open Image",
-                key=f"photo_{message.id}_{index}",
-                use_container_width=True
+        if st.button(
+            "📂 Open File",
+            key=f"file_{message.id}_{number}",
+            use_container_width=True
+        ):
+
+            with st.spinner(
+                "⏳ File loading..."
             ):
 
-                with st.spinner(
-                    "Loading image..."
-                ):
+                try:
 
-                    try:
+                    file_path = run_async(
+                        download_message(message)
+                    )
 
-                        image_path = run_async(
-                            download_media(message)
+                    if file_path:
+
+                        with open(
+                            file_path,
+                            "rb"
+                        ) as file:
+
+                            data = file.read()
+
+                        st.download_button(
+                            "⬇️ Download File",
+                            data=data,
+                            file_name=filename,
+                            key=f"download_{message.id}_{number}",
+                            use_container_width=True
                         )
 
-                        if image_path:
+                        # PDF viewer
+                        if filename.lower().endswith(
+                            ".pdf"
+                        ):
 
-                            st.image(
-                                image_path,
-                                use_container_width=True
-                            )
+                            import base64
 
-                    except Exception as e:
+                            encoded = base64.b64encode(
+                                data
+                            ).decode()
 
-                        st.error(
-                            "Image load failed."
-                        )
-
-                        st.code(
-                            str(e)
-                        )
-
-
-        # ----------------------------------------------------
-        # AUDIO
-        # ----------------------------------------------------
-
-        elif media_type == "audio":
-
-            st.markdown(
-                f"""
-                <div class="file-name">
-                    🎵 {file_name}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            if st.button(
-                "▶️ Play Audio",
-                key=f"audio_{message.id}_{index}",
-                use_container_width=True
-            ):
-
-                with st.spinner(
-                    "Loading audio..."
-                ):
-
-                    try:
-
-                        audio_path = run_async(
-                            download_media(message)
-                        )
-
-                        if audio_path:
-
-                            st.audio(
-                                audio_path
-                            )
-
-                    except Exception as e:
-
-                        st.error(
-                            "Audio load failed."
-                        )
-
-                        st.code(
-                            str(e)
-                        )
-
-
-        # ----------------------------------------------------
-        # DOCUMENT
-        # ----------------------------------------------------
-
-        elif media_type == "document":
-
-            st.markdown(
-                f"""
-                <div class="file-name">
-                    📄 {file_name}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            if caption:
-
-                st.caption(
-                    caption[:500]
-                )
-
-            if st.button(
-                "📂 Open File",
-                key=f"doc_{message.id}_{index}",
-                use_container_width=True
-            ):
-
-                with st.spinner(
-                    "Loading file..."
-                ):
-
-                    try:
-
-                        document_path = run_async(
-                            download_media(message)
-                        )
-
-                        if document_path:
-
-                            with open(
-                                document_path,
-                                "rb"
-                            ) as f:
-
-                                file_bytes = f.read()
-
-                            st.download_button(
-                                "⬇️ Download File",
-                                data=file_bytes,
-                                file_name=file_name,
-                                key=f"download_{message.id}_{index}",
-                                use_container_width=True
-                            )
-
-                            # PDF viewer
-                            if file_name.lower().endswith(
-                                ".pdf"
-                            ):
-
-                                import base64
-
-                                encoded = base64.b64encode(
-                                    file_bytes
-                                ).decode()
-
-                                pdf_display = f"""
+                            st.markdown(
+                                f"""
                                 <iframe
                                     src="data:application/pdf;base64,{encoded}"
                                     width="100%"
                                     height="700"
                                     style="border:none;">
                                 </iframe>
-                                """
+                                """,
+                                unsafe_allow_html=True
+                            )
 
-                                st.markdown(
-                                    pdf_display,
-                                    unsafe_allow_html=True
-                                )
+                except Exception as e:
 
-                    except Exception as e:
+                    st.error(
+                        "File load failed."
+                    )
 
-                        st.error(
-                            "File open failed."
-                        )
-
-                        st.code(
-                            str(e)
-                        )
+                    st.code(
+                        str(e)
+                    )
 
 
-        # ----------------------------------------------------
-        # TEXT
-        # ----------------------------------------------------
+    # ========================================================
+    # TEXT POST
+    # ========================================================
 
-        else:
-
-            st.markdown(
-                f"""
-                <div class="file-name">
-                    📝 Telegram Post
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            if caption:
-
-                st.write(
-                    caption
-                )
-
-        # ----------------------------------------------------
-        # MESSAGE INFO
-        # ----------------------------------------------------
+    else:
 
         st.markdown(
-            f"""
-            <div class="file-info">
-                Message ID: {message.id}
+            """
+            <div class="file-title">
+                📝 Telegram Post
             </div>
             """,
             unsafe_allow_html=True
         )
 
-        st.markdown(
-            "</div>",
-            unsafe_allow_html=True
-        )
+        if caption:
+
+            st.write(
+                caption
+            )
+
+        else:
+
+            st.caption(
+                "Empty Telegram post"
+            )
+
+
+    # ========================================================
+    # MESSAGE ID
+    # ========================================================
+
+    st.markdown(
+        f"""
+        <div class="file-info">
+            Message ID: {message.id}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        "</div>",
+        unsafe_allow_html=True
+    )
 
 
 # ============================================================
-# 19. REFRESH
+# REFRESH
 # ============================================================
 
 st.divider()
 
 if st.button(
-    "🔄 Refresh",
+    "🔄 Refresh Channels",
     use_container_width=True
 ):
 
+    st.cache_data.clear()
     st.rerun()
 
+सबसे जरूरी: "requirements.txt"
 
-# ============================================================
-# 20. FOOTER
-# ============================================================
+इसे भी exactly ऐसा रखो:
 
-st.markdown(
-    """
-    <p style="
-        text-align:center;
-        color:#666;
-        margin-top:30px;
-    ">
-        Powered by Telegram + Streamlit
-    </p>
-    """,
-    unsafe_allow_html=True
-)
+streamlit
+Telethon
+
+Streamlit की documentation के अनुसार external Python packages को "requirements.txt" में declare करना होता है और file repository root या app entrypoint के directory में होनी चाहिए। Dependency file बदलने पर Community Cloud नया environment resolve/install करता है।
+
+तुम्हारा GitHub structure:
+
+telegram-website/
+│
+├── app.py
+└── requirements.txt
+
+⚠️ लेकिन एक बात
+
+अगर "Telethon" डालने के बाद भी वही "ModuleNotFoundError" आ रहा है, तो इस नए "app.py" को बदलने से error ठीक नहीं होगा। उस स्थिति में समस्या deployment/dependency installation की है, और हमें Manage app → Logs देखना होगा। Streamlit भी "ModuleNotFoundError" के लिए dependency file और deployment logs check करने की सलाह देता है।
+
+अगर चाहो तो Manage app → Logs का screenshot भेज दो; token/API credentials छिपाकर। मैं उसी के आधार पर exact fix बताऊँगा।
