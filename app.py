@@ -1,34 +1,20 @@
 import streamlit as st
 import requests
 
-st.set_page_config(
-    page_title="Telegram Website",
-    page_icon="📱",
-    layout="wide"
-)
+st.title("Telegram Token Test")
 
-st.title("📱 My Telegram Website")
+token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 
-TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
+st.write("Secret exists:", bool(token))
+st.write("Token length:", len(token))
 
-url = f"https://api.telegram.org/bot{TOKEN}/getMe"
+if token:
+    response = requests.get(
+        f"https://api.telegram.org/bot{token}/getMe",
+        timeout=10
+    )
 
-try:
-    response = requests.get(url, timeout=10)
-    data = response.json()
-
-    if data.get("ok"):
-        bot = data["result"]
-
-        st.success("✅ Telegram Bot Connected!")
-
-        st.write("**Bot Name:**", bot.get("first_name"))
-        st.write("**Bot Username:**", "@" + bot.get("username", ""))
-
-    else:
-        st.error("❌ Telegram connection failed")
-        st.json(data)
-
-except Exception as e:
-    st.error("❌ Error")
-    st.write(str(e))
+    st.write("HTTP Status:", response.status_code)
+    st.json(response.json())
+else:
+    st.error("TELEGRAM_BOT_TOKEN not found")
