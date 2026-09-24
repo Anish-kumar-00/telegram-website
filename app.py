@@ -797,24 +797,3 @@ if st.button(
     st.cache_data.clear()
     st.rerun()
 
-सबसे जरूरी: "requirements.txt"
-
-इसे भी exactly ऐसा रखो:
-
-streamlit
-Telethon
-
-Streamlit की documentation के अनुसार external Python packages को "requirements.txt" में declare करना होता है और file repository root या app entrypoint के directory में होनी चाहिए। Dependency file बदलने पर Community Cloud नया environment resolve/install करता है।
-
-तुम्हारा GitHub structure:
-
-telegram-website/
-│
-├── app.py
-└── requirements.txt
-
-⚠️ लेकिन एक बात
-
-अगर "Telethon" डालने के बाद भी वही "ModuleNotFoundError" आ रहा है, तो इस नए "app.py" को बदलने से error ठीक नहीं होगा। उस स्थिति में समस्या deployment/dependency installation की है, और हमें Manage app → Logs देखना होगा। Streamlit भी "ModuleNotFoundError" के लिए dependency file और deployment logs check करने की सलाह देता है।
-
-अगर चाहो तो Manage app → Logs का screenshot भेज दो; token/API credentials छिपाकर। मैं उसी के आधार पर exact fix बताऊँगा।
