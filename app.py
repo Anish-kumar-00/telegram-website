@@ -23,7 +23,7 @@ st.set_page_config(
 
 
 # ============================================================
-# 2. CUSTOM CSS
+# 2. CSS
 # ============================================================
 
 st.markdown(
@@ -107,6 +107,11 @@ st.markdown(
     font-size: 12px;
 }
 
+.small-text {
+    color: #aeb6c7;
+    font-size: 14px;
+}
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -163,7 +168,7 @@ def run_async(coro):
 # 5. TELEGRAM CLIENT
 # ============================================================
 
-SESSION_PATH = os.path.join(
+SESSION_FILE = os.path.join(
     tempfile.gettempdir(),
     "telegram_website_session"
 )
@@ -172,7 +177,7 @@ SESSION_PATH = os.path.join(
 async def create_client():
 
     client = TelegramClient(
-        SESSION_PATH,
+        SESSION_FILE,
         API_ID,
         API_HASH,
     )
@@ -199,7 +204,13 @@ try:
 except Exception as e:
 
     st.error("❌ Telegram connection failed.")
+
     st.code(str(e))
+
+    st.info(
+        "API ID, API HASH aur BOT TOKEN check karo."
+    )
+
     st.stop()
 
 
@@ -209,7 +220,7 @@ except Exception as e:
 
 async def get_channels():
 
-    channels = []
+    result = []
 
     async for dialog in client.iter_dialogs():
 
@@ -223,7 +234,7 @@ async def get_channels():
                 False
             ):
 
-                channels.append(
+                result.append(
                     {
                         "id": entity.id,
                         "title": (
@@ -238,7 +249,7 @@ async def get_channels():
                     }
                 )
 
-    return channels
+    return result
 
 
 try:
@@ -249,8 +260,12 @@ try:
 
 except Exception as e:
 
-    st.error("❌ Channels load nahi ho pa rahe.")
+    st.error(
+        "❌ Channels load nahi ho pa rahe."
+    )
+
     st.code(str(e))
+
     st.stop()
 
 
@@ -276,7 +291,7 @@ PDFs, audio and other files.
 
 
 # ============================================================
-# 8. CHANNEL CHECK
+# 8. NO CHANNEL
 # ============================================================
 
 if not channels:
@@ -302,15 +317,18 @@ st.sidebar.caption(
     f"{len(channels)} channel(s)"
 )
 
+
 channel_names = [
     channel["title"]
     for channel in channels
 ]
 
+
 selected_name = st.sidebar.radio(
     "Folders",
     channel_names,
 )
+
 
 selected_channel = next(
     (
@@ -343,10 +361,13 @@ PRIVATE TELEGRAM CHANNEL
 
 
 # ============================================================
-# 11. SEARCH
+# 11. SEARCH + MESSAGE LIMIT
 # ============================================================
 
-col1, col2 = st.columns([4, 1])
+col1, col2 = st.columns(
+    [4, 1]
+)
+
 
 with col1:
 
@@ -354,6 +375,7 @@ with col1:
         "🔎 Search files / messages",
         placeholder="Search...",
     )
+
 
 with col2:
 
@@ -415,12 +437,13 @@ with st.spinner(
 
 
 # ============================================================
-# 13. RESULT
+# 13. RESULT COUNT
 # ============================================================
 
 st.caption(
     f"📦 {len(messages)} item(s) found"
 )
+
 
 if not messages:
 
@@ -449,6 +472,7 @@ def get_media_type(message):
     if message.document:
 
         mime = ""
+
         filename = ""
 
         if message.file:
@@ -479,7 +503,7 @@ def get_media_type(message):
 
 
 # ============================================================
-# 15. DOWNLOAD
+# 15. DOWNLOAD MEDIA
 # ============================================================
 
 async def download_media(
@@ -499,12 +523,14 @@ async def download_media(
 
 
 # ============================================================
-# 16. DISPLAY
+# 16. DISPLAY MESSAGES
 # ============================================================
 
 for message in messages:
 
-    media_type = get_media_type(message)
+    media_type = get_media_type(
+        message
+    )
 
     caption = (
         message.text or ""
@@ -522,9 +548,13 @@ for message in messages:
             unsafe_allow_html=True,
         )
 
-        st.markdown("### 💬 Message")
+        st.markdown(
+            "### 💬 Message"
+        )
 
-        st.write(caption)
+        st.write(
+            caption
+        )
 
         if message.date:
 
@@ -547,6 +577,7 @@ for message in messages:
     # --------------------------------------------------------
 
     if media_type == "other":
+
         continue
 
 
@@ -559,6 +590,10 @@ for message in messages:
         unsafe_allow_html=True,
     )
 
+
+    # --------------------------------------------------------
+    # FILE NAME
+    # --------------------------------------------------------
 
     filename = "Telegram File"
 
@@ -661,7 +696,9 @@ for message in messages:
                     "Video load nahi ho paya."
                 )
 
-                st.caption(str(e))
+                st.caption(
+                    str(e)
+                )
 
 
     # ========================================================
@@ -718,7 +755,9 @@ for message in messages:
                     "Image load nahi ho payi."
                 )
 
-                st.caption(str(e))
+                st.caption(
+                    str(e)
+                )
 
 
     # ========================================================
@@ -782,7 +821,9 @@ for message in messages:
                     "Audio load nahi ho paya."
                 )
 
-                st.caption(str(e))
+                st.caption(
+                    str(e)
+                )
 
 
     # ========================================================
@@ -820,7 +861,9 @@ for message in messages:
 
                     encoded = base64.b64encode(
                         pdf_data
-                    ).decode("utf-8")
+                    ).decode(
+                        "utf-8"
+                    )
 
 
                     pdf_viewer = f"""
@@ -865,11 +908,13 @@ for message in messages:
                     "PDF load nahi ho paya."
                 )
 
-                st.caption(str(e))
+                st.caption(
+                    str(e)
+                )
 
 
     # ========================================================
-    # DOCUMENT
+    # OTHER DOCUMENT
     # ========================================================
 
     elif media_type == "document":
@@ -930,7 +975,9 @@ for message in messages:
                     "File load nahi ho payi."
                 )
 
-                st.caption(str(e))
+                st.caption(
+                    str(e)
+                )
 
 
     # ========================================================
@@ -939,9 +986,13 @@ for message in messages:
 
     if caption:
 
-        st.markdown("**Caption:**")
+        st.markdown(
+            "**Caption:**"
+        )
 
-        st.write(caption)
+        st.write(
+            caption
+        )
 
 
     st.markdown(
