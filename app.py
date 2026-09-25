@@ -145,7 +145,7 @@ try:
         "TELEGRAM_BOT_TOKEN"
     ]
 
-except Exception as e:
+except Exception:
 
     st.error(
         "❌ Telegram Secrets missing."
@@ -163,12 +163,6 @@ TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
 
 # ============================================================
 # 4. TELEGRAM MANAGER
-#
-# IMPORTANT:
-# One permanent asyncio event loop is created in one
-# background thread.
-#
-# Every Telethon operation runs on this SAME loop.
 # ============================================================
 
 class TelegramManager:
@@ -181,41 +175,44 @@ class TelegramManager:
 
         self.ready = threading.Event()
 
-        self.start_error = None
-
         self.thread = threading.Thread(
             target=self._loop_worker,
             daemon=True,
-            name="telegram-event-loop",
+            name="telegram-loop",
         )
 
         self.thread.start()
 
-        # Wait until background loop is ready
+        # Wait for background asyncio loop
         if not self.ready.wait(
             timeout=10
         ):
 
             raise RuntimeError(
-                "Telegram background event loop start nahi ho paya."
+                "❌ Background asyncio loop start nahi hua."
             )
 
-        # Connect Telegram client
+        # Connect + authorize
         future = asyncio.run_coroutine_threadsafe(
-            self._connect(),
+            self._initialize(),
             self.loop,
         )
 
         try:
 
             future.result(
-                timeout=40
+                timeout=60
             )
 
         except Exception as e:
 
+            try:
+                future.cancel()
+            except Exception:
+                pass
+
             raise RuntimeError(
-                f"Telegram connection failed: {e}"
+                f"❌ Telegram initialization failed:\n{e}"
             ) from e
 
 
@@ -235,18 +232,16 @@ class TelegramManager:
 
             self.loop.run_forever()
 
-        except Exception as e:
-
-            self.start_error = e
+        except Exception:
 
             self.ready.set()
 
 
     # ========================================================
-    # CONNECT TELEGRAM
+    # TELEGRAM INITIALIZATION
     # ========================================================
 
-    async def _connect(self):
+    async def _initialize(self):
 
         session_file = os.path.join(
             tempfile.gettempdir(),
@@ -257,33 +252,125 @@ class TelegramManager:
             session_file,
             API_ID,
             API_HASH,
+            connection_retries=1,
+            retry_delay=1,
+            timeout=15,
         )
+
+        # ----------------------------------------------------
+        # STEP 1: CONNECT
+        # ----------------------------------------------------
 
         try:
 
-            # IMPORTANT:
-            # Prevent endless waiting
             await asyncio.wait_for(
-                self.client.start(
-                    bot_token=BOT_TOKEN
-                ),
-                timeout=30,
+                self.client.connect(),
+                timeout=20,
             )
 
         except asyncio.TimeoutError:
 
-            try:
-                await self.client.disconnect()
-            except Exception:
-                pass
+            raise RuntimeError(
+                "Telegram MTProto connection timeout "
+                "(20 seconds)."
+            )
+
+        except Exception as e:
 
             raise RuntimeError(
-                "Telegram connection 30 seconds ke andar complete nahi hua."
+                f"Telegram connect() failed: {e}"
+            )
+
+
+        # ----------------------------------------------------
+        # STEP 2: CHECK AUTHORIZATION
+        # ----------------------------------------------------
+
+        try:
+
+            authorized = await asyncio.wait_for(
+                self.client.is_user_authorized(),
+                timeout=15,
+            )
+
+        except asyncio.TimeoutError:
+
+            raise RuntimeError(
+                "Telegram authorization check timeout."
+            )
+
+        except Exception as e:
+
+            raise RuntimeError(
+                f"Authorization check failed: {e}"
+            )
+
+
+        # ----------------------------------------------------
+        # STEP 3: BOT SIGN-IN
+        # ----------------------------------------------------
+
+        if not authorized:
+
+            try:
+
+                await asyncio.wait_for(
+                    self.client.sign_in(
+                        bot_token=BOT_TOKEN
+                    ),
+                    timeout=25,
+                )
+
+            except asyncio.TimeoutError:
+
+                raise RuntimeError(
+                    "Bot sign-in timeout (25 seconds)."
+                )
+
+            except Exception as e:
+
+                raise RuntimeError(
+                    f"Bot sign-in failed: {e}"
+                )
+
+
+        # ----------------------------------------------------
+        # STEP 4: VERIFY BOT
+        # ----------------------------------------------------
+
+        try:
+
+            me = await asyncio.wait_for(
+                self.client.get_me(),
+                timeout=15,
+            )
+
+        except asyncio.TimeoutError:
+
+            raise RuntimeError(
+                "Telegram get_me() timeout."
+            )
+
+        except Exception as e:
+
+            raise RuntimeError(
+                f"Telegram get_me() failed: {e}"
+            )
+
+
+        # ----------------------------------------------------
+        # STEP 5: FINAL CHECK
+        # ----------------------------------------------------
+
+        if not me:
+
+            raise RuntimeError(
+                "Telegram bot verification failed."
             )
 
 
     # ========================================================
-    # RUN COROUTINE ON SAME LOOP
+    # RUN COROUTINE ON THE SAME LOOP
     # ========================================================
 
     def run(
@@ -295,7 +382,7 @@ class TelegramManager:
         if not self.thread.is_alive():
 
             raise RuntimeError(
-                "Telegram background thread band ho gaya hai."
+                "Telegram background thread is not running."
             )
 
         future = asyncio.run_coroutine_threadsafe(
@@ -314,7 +401,8 @@ class TelegramManager:
             future.cancel()
 
             raise RuntimeError(
-                f"Telegram operation {timeout} seconds ke baad timeout ho gaya."
+                f"Telegram operation timeout "
+                f"after {timeout} seconds."
             )
 
 
@@ -334,7 +422,7 @@ class TelegramManager:
                 )
 
                 future.result(
-                    timeout=15
+                    timeout=10
                 )
 
         except Exception:
@@ -351,7 +439,7 @@ class TelegramManager:
 
 
 # ============================================================
-# 5. CREATE TELEGRAM MANAGER
+# 5. CREATE MANAGER
 # ============================================================
 
 @st.cache_resource
@@ -361,39 +449,66 @@ def get_telegram_manager():
 
 
 # ============================================================
-# 6. CONNECT
+# 6. TELEGRAM CONNECTION
 # ============================================================
 
-with st.spinner(
-    "🔐 Telegram se secure connection ban raha hai..."
-):
+st.markdown(
+    """
+<div class="status-box">
+    🔐 <b>Telegram se secure connection ban raha hai...</b>
+    <br>
+    <span class="small-text">
+        Telegram server se connection establish kiya ja raha hai.
+    </span>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
-    try:
 
-        telegram = get_telegram_manager()
+try:
 
-        client = telegram.client
+    telegram = get_telegram_manager()
 
-    except Exception as e:
+    client = telegram.client
 
-        st.error(
-            "❌ Telegram connection failed."
-        )
+except Exception as e:
 
-        st.code(
-            str(e)
-        )
+    st.error(
+        "❌ Telegram connection failed."
+    )
 
-        st.warning(
-            "30 seconds ke andar Telegram connection complete nahi hua. "
-            "Secrets aur Bot permissions check karo."
-        )
+    st.code(
+        str(e)
+    )
 
-        st.stop()
+    st.warning(
+        "Upar jo exact error diya gaya hai, wahi actual problem hai."
+    )
+
+    st.stop()
 
 
 # ============================================================
-# 7. HEADER
+# 7. CONNECTION SUCCESS
+# ============================================================
+
+st.markdown(
+    """
+<div class="status-box">
+    🟢 <b>Telegram Connected</b>
+    <br>
+    <span class="small-text">
+        Bot successfully connected to Telegram.
+    </span>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# 8. HEADER
 # ============================================================
 
 st.markdown(
@@ -414,24 +529,6 @@ PDFs, audio and other files.
 
 
 # ============================================================
-# 8. CONNECTION STATUS
-# ============================================================
-
-st.markdown(
-    """
-<div class="status-box">
-    🟢 <b>Telegram Connected</b>
-    <br>
-    <span class="small-text">
-        Telegram Bot successfully connected.
-    </span>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
 # 9. GET CHANNELS
 # ============================================================
 
@@ -445,10 +542,9 @@ async def get_channels():
 
         if isinstance(
             entity,
-            Channel
+            Channel,
         ):
 
-            # Broadcast channel
             if getattr(
                 entity,
                 "broadcast",
@@ -493,7 +589,7 @@ except Exception as e:
     )
 
     st.info(
-        "Bot ko private Telegram channels me add/admin kiya gaya hai ya nahi check karo."
+        "Bot ko private channel me add/admin kiya gaya hai ya nahi check karo."
     )
 
     st.stop()
@@ -510,8 +606,8 @@ if not channels:
     )
 
     st.info(
-        "Bot ko apne private channels me add karo. "
-        "Uske baad Streamlit app ko reboot karo."
+        "Bot ko apne private Telegram channels me add karo "
+        "aur app ko reboot karo."
     )
 
     st.stop()
@@ -675,9 +771,7 @@ if not messages:
 # 16. MEDIA TYPE
 # ============================================================
 
-def get_media_type(
-    message
-):
+def get_media_type(message):
 
     if message.video:
 
@@ -815,10 +909,6 @@ for message in messages:
     )
 
 
-    # ========================================================
-    # FILE NAME
-    # ========================================================
-
     filename = "Telegram File"
 
     if message.file:
@@ -912,15 +1002,11 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download Video",
-
                         data=video_data,
-
                         file_name=os.path.basename(
                             video_path
                         ),
-
                         mime=mime,
-
                         key=f"video_{message.id}",
                     )
 
@@ -976,15 +1062,11 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download Image",
-
                         data=image_data,
-
                         file_name=os.path.basename(
                             image_path
                         ),
-
                         mime="image/jpeg",
-
                         key=f"photo_{message.id}",
                     )
 
@@ -1049,15 +1131,11 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download Audio",
-
                         data=audio_data,
-
                         file_name=os.path.basename(
                             audio_path
                         ),
-
                         mime=mime,
-
                         key=f"audio_{message.id}",
                     )
 
@@ -1143,13 +1221,9 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download PDF",
-
                         data=pdf_data,
-
                         file_name=pdf_name,
-
                         mime="application/pdf",
-
                         key=f"pdf_{message.id}",
                     )
 
@@ -1213,15 +1287,11 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download File",
-
                         data=file_data,
-
                         file_name=os.path.basename(
                             file_path
                         ),
-
                         mime=mime,
-
                         key=f"document_{message.id}",
                     )
 
@@ -1251,7 +1321,6 @@ for message in messages:
         )
 
 
-    # Close card
     st.markdown(
         "</div>",
         unsafe_allow_html=True,
