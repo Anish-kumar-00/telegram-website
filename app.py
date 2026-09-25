@@ -108,6 +108,19 @@ st.markdown(
     font-size: 12px;
 }
 
+.small-text {
+    color: #aeb6c7;
+    font-size: 14px;
+}
+
+.status-box {
+    padding: 15px 18px;
+    border-radius: 15px;
+    background: rgba(20,25,40,0.9);
+    border: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 20px;
+}
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -119,12 +132,24 @@ st.markdown(
 # ============================================================
 
 try:
-    API_ID = int(st.secrets["TELEGRAM_API_ID"])
-    API_HASH = st.secrets["TELEGRAM_API_HASH"]
-    BOT_TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
 
-except Exception:
-    st.error("❌ Telegram Secrets missing.")
+    API_ID = int(
+        st.secrets["TELEGRAM_API_ID"]
+    )
+
+    API_HASH = st.secrets[
+        "TELEGRAM_API_HASH"
+    ]
+
+    BOT_TOKEN = st.secrets[
+        "TELEGRAM_BOT_TOKEN"
+    ]
+
+except Exception as e:
+
+    st.error(
+        "❌ Telegram Secrets missing."
+    )
 
     st.code(
         """TELEGRAM_API_ID = "YOUR_API_ID"
@@ -137,7 +162,13 @@ TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
 
 
 # ============================================================
-# 4. TELEGRAM BACKGROUND LOOP
+# 4. TELEGRAM MANAGER
+#
+# IMPORTANT:
+# One permanent asyncio event loop is created in one
+# background thread.
+#
+# Every Telethon operation runs on this SAME loop.
 # ============================================================
 
 class TelegramManager:
@@ -148,74 +179,154 @@ class TelegramManager:
 
         self.client = None
 
+        self.ready = threading.Event()
+
+        self.start_error = None
+
         self.thread = threading.Thread(
-            target=self._run_loop,
+            target=self._loop_worker,
             daemon=True,
+            name="telegram-event-loop",
         )
 
         self.thread.start()
 
-        self.ready = threading.Event()
+        # Wait until background loop is ready
+        if not self.ready.wait(
+            timeout=10
+        ):
 
-        # Wait until loop/thread is ready
-        self.ready.wait()
+            raise RuntimeError(
+                "Telegram background event loop start nahi ho paya."
+            )
 
-        # Create Telegram client inside
-        # the SAME background event loop
+        # Connect Telegram client
         future = asyncio.run_coroutine_threadsafe(
             self._connect(),
             self.loop,
         )
 
-        future.result(timeout=60)
+        try:
+
+            future.result(
+                timeout=40
+            )
+
+        except Exception as e:
+
+            raise RuntimeError(
+                f"Telegram connection failed: {e}"
+            ) from e
 
 
-    def _run_loop(self):
+    # ========================================================
+    # BACKGROUND EVENT LOOP
+    # ========================================================
 
-        asyncio.set_event_loop(
-            self.loop
-        )
+    def _loop_worker(self):
 
-        self.ready.set()
+        try:
 
-        self.loop.run_forever()
+            asyncio.set_event_loop(
+                self.loop
+            )
 
+            self.ready.set()
+
+            self.loop.run_forever()
+
+        except Exception as e:
+
+            self.start_error = e
+
+            self.ready.set()
+
+
+    # ========================================================
+    # CONNECT TELEGRAM
+    # ========================================================
 
     async def _connect(self):
 
-        session_path = os.path.join(
+        session_file = os.path.join(
             tempfile.gettempdir(),
-            "telegram_website_session",
+            "telegram_website_bot_session",
         )
 
         self.client = TelegramClient(
-            session_path,
+            session_file,
             API_ID,
             API_HASH,
         )
 
-        await self.client.start(
-            bot_token=BOT_TOKEN
-        )
+        try:
+
+            # IMPORTANT:
+            # Prevent endless waiting
+            await asyncio.wait_for(
+                self.client.start(
+                    bot_token=BOT_TOKEN
+                ),
+                timeout=30,
+            )
+
+        except asyncio.TimeoutError:
+
+            try:
+                await self.client.disconnect()
+            except Exception:
+                pass
+
+            raise RuntimeError(
+                "Telegram connection 30 seconds ke andar complete nahi hua."
+            )
 
 
-    def run(self, coro):
+    # ========================================================
+    # RUN COROUTINE ON SAME LOOP
+    # ========================================================
+
+    def run(
+        self,
+        coroutine,
+        timeout=180,
+    ):
+
+        if not self.thread.is_alive():
+
+            raise RuntimeError(
+                "Telegram background thread band ho gaya hai."
+            )
 
         future = asyncio.run_coroutine_threadsafe(
-            coro,
+            coroutine,
             self.loop,
         )
 
-        return future.result(
-            timeout=300
-        )
+        try:
 
+            return future.result(
+                timeout=timeout
+            )
+
+        except TimeoutError:
+
+            future.cancel()
+
+            raise RuntimeError(
+                f"Telegram operation {timeout} seconds ke baad timeout ho gaya."
+            )
+
+
+    # ========================================================
+    # CLOSE
+    # ========================================================
 
     def close(self):
 
-        if self.client:
+        try:
 
-            try:
+            if self.client:
 
                 future = asyncio.run_coroutine_threadsafe(
                     self.client.disconnect(),
@@ -223,16 +334,18 @@ class TelegramManager:
                 )
 
                 future.result(
-                    timeout=20
+                    timeout=15
                 )
 
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         try:
+
             self.loop.call_soon_threadsafe(
                 self.loop.stop
             )
+
         except Exception:
             pass
 
@@ -247,83 +360,36 @@ def get_telegram_manager():
     return TelegramManager()
 
 
-try:
-
-    telegram = get_telegram_manager()
-
-    client = telegram.client
-
-except Exception as e:
-
-    st.error(
-        "❌ Telegram connection failed."
-    )
-
-    st.code(
-        str(e)
-    )
-
-    st.stop()
-
-
 # ============================================================
-# 6. GET CHANNELS
+# 6. CONNECT
 # ============================================================
 
-async def get_channels():
+with st.spinner(
+    "🔐 Telegram se secure connection ban raha hai..."
+):
 
-    result = []
+    try:
 
-    async for dialog in client.iter_dialogs():
+        telegram = get_telegram_manager()
 
-        entity = dialog.entity
+        client = telegram.client
 
-        if isinstance(
-            entity,
-            Channel
-        ):
+    except Exception as e:
 
-            if getattr(
-                entity,
-                "broadcast",
-                False
-            ):
+        st.error(
+            "❌ Telegram connection failed."
+        )
 
-                result.append(
-                    {
-                        "id": entity.id,
-                        "title": (
-                            dialog.name
-                            or "Unnamed Channel"
-                        ),
-                        "username": getattr(
-                            entity,
-                            "username",
-                            None,
-                        ),
-                    }
-                )
+        st.code(
+            str(e)
+        )
 
-    return result
+        st.warning(
+            "30 seconds ke andar Telegram connection complete nahi hua. "
+            "Secrets aur Bot permissions check karo."
+        )
 
-
-try:
-
-    channels = telegram.run(
-        get_channels()
-    )
-
-except Exception as e:
-
-    st.error(
-        "❌ Channels load nahi ho pa rahe."
-    )
-
-    st.code(
-        str(e)
-    )
-
-    st.stop()
+        st.stop()
 
 
 # ============================================================
@@ -348,7 +414,93 @@ PDFs, audio and other files.
 
 
 # ============================================================
-# 8. CHANNEL CHECK
+# 8. CONNECTION STATUS
+# ============================================================
+
+st.markdown(
+    """
+<div class="status-box">
+    🟢 <b>Telegram Connected</b>
+    <br>
+    <span class="small-text">
+        Telegram Bot successfully connected.
+    </span>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# 9. GET CHANNELS
+# ============================================================
+
+async def get_channels():
+
+    result = []
+
+    async for dialog in client.iter_dialogs():
+
+        entity = dialog.entity
+
+        if isinstance(
+            entity,
+            Channel
+        ):
+
+            # Broadcast channel
+            if getattr(
+                entity,
+                "broadcast",
+                False,
+            ):
+
+                result.append(
+                    {
+                        "id": entity.id,
+
+                        "title": (
+                            dialog.name
+                            or "Unnamed Channel"
+                        ),
+
+                        "username": getattr(
+                            entity,
+                            "username",
+                            None,
+                        ),
+                    }
+                )
+
+    return result
+
+
+try:
+
+    channels = telegram.run(
+        get_channels(),
+        timeout=90,
+    )
+
+except Exception as e:
+
+    st.error(
+        "❌ Channels load nahi ho pa rahe."
+    )
+
+    st.code(
+        str(e)
+    )
+
+    st.info(
+        "Bot ko private Telegram channels me add/admin kiya gaya hai ya nahi check karo."
+    )
+
+    st.stop()
+
+
+# ============================================================
+# 10. NO CHANNEL
 # ============================================================
 
 if not channels:
@@ -358,14 +510,15 @@ if not channels:
     )
 
     st.info(
-        "Check karo ki bot ko tumhare private channels me add kiya gaya hai."
+        "Bot ko apne private channels me add karo. "
+        "Uske baad Streamlit app ko reboot karo."
     )
 
     st.stop()
 
 
 # ============================================================
-# 9. SIDEBAR
+# 11. SIDEBAR
 # ============================================================
 
 st.sidebar.title(
@@ -376,15 +529,18 @@ st.sidebar.caption(
     f"{len(channels)} channel(s)"
 )
 
+
 channel_names = [
     channel["title"]
     for channel in channels
 ]
 
+
 selected_name = st.sidebar.radio(
     "Folders",
     channel_names,
 )
+
 
 selected_channel = next(
     (
@@ -397,7 +553,7 @@ selected_channel = next(
 
 
 # ============================================================
-# 10. FOLDER HEADER
+# 12. FOLDER HEADER
 # ============================================================
 
 st.markdown(
@@ -417,12 +573,13 @@ PRIVATE TELEGRAM CHANNEL
 
 
 # ============================================================
-# 11. SEARCH + LIMIT
+# 13. SEARCH + MESSAGE LIMIT
 # ============================================================
 
 col1, col2 = st.columns(
     [4, 1]
 )
+
 
 with col1:
 
@@ -430,6 +587,7 @@ with col1:
         "🔎 Search files / messages",
         placeholder="Search...",
     )
+
 
 with col2:
 
@@ -443,7 +601,7 @@ with col2:
 
 
 # ============================================================
-# 12. FETCH MESSAGES
+# 14. FETCH MESSAGES
 # ============================================================
 
 async def fetch_messages(
@@ -478,7 +636,8 @@ with st.spinner(
                 selected_channel["id"],
                 int(message_limit),
                 search_text.strip(),
-            )
+            ),
+            timeout=180,
         )
 
     except Exception as e:
@@ -495,12 +654,13 @@ with st.spinner(
 
 
 # ============================================================
-# 13. RESULT COUNT
+# 15. RESULT COUNT
 # ============================================================
 
 st.caption(
     f"📦 {len(messages)} item(s) found"
 )
+
 
 if not messages:
 
@@ -512,18 +672,23 @@ if not messages:
 
 
 # ============================================================
-# 14. MEDIA TYPE
+# 16. MEDIA TYPE
 # ============================================================
 
-def get_media_type(message):
+def get_media_type(
+    message
+):
 
     if message.video:
+
         return "video"
 
     if message.photo:
+
         return "photo"
 
     if message.audio:
+
         return "audio"
 
     if message.document:
@@ -561,7 +726,7 @@ def get_media_type(message):
 
 
 # ============================================================
-# 15. DOWNLOAD MEDIA
+# 17. DOWNLOAD MEDIA
 # ============================================================
 
 async def download_media(
@@ -571,7 +736,7 @@ async def download_media(
 
     os.makedirs(
         folder,
-        exist_ok=True
+        exist_ok=True,
     )
 
     return await client.download_media(
@@ -581,7 +746,7 @@ async def download_media(
 
 
 # ============================================================
-# 16. DISPLAY MESSAGES
+# 18. DISPLAY MESSAGES
 # ============================================================
 
 for message in messages:
@@ -591,12 +756,13 @@ for message in messages:
     )
 
     caption = (
-        message.text or ""
+        message.text
+        or ""
     ).strip()
 
 
     # ========================================================
-    # TEXT MESSAGE
+    # TEXT
     # ========================================================
 
     if media_type == "text":
@@ -648,6 +814,10 @@ for message in messages:
         unsafe_allow_html=True,
     )
 
+
+    # ========================================================
+    # FILE NAME
+    # ========================================================
 
     filename = "Telegram File"
 
@@ -714,7 +884,8 @@ for message in messages:
                     download_media(
                         message,
                         folder,
-                    )
+                    ),
+                    timeout=600,
                 )
 
                 if video_path:
@@ -725,7 +896,7 @@ for message in messages:
 
                     with open(
                         video_path,
-                        "rb"
+                        "rb",
                     ) as f:
 
                         video_data = f.read()
@@ -741,11 +912,15 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download Video",
+
                         data=video_data,
+
                         file_name=os.path.basename(
                             video_path
                         ),
+
                         mime=mime,
+
                         key=f"video_{message.id}",
                     )
 
@@ -780,7 +955,8 @@ for message in messages:
                     download_media(
                         message,
                         folder,
-                    )
+                    ),
+                    timeout=300,
                 )
 
                 if image_path:
@@ -792,7 +968,7 @@ for message in messages:
 
                     with open(
                         image_path,
-                        "rb"
+                        "rb",
                     ) as f:
 
                         image_data = f.read()
@@ -800,11 +976,15 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download Image",
+
                         data=image_data,
+
                         file_name=os.path.basename(
                             image_path
                         ),
+
                         mime="image/jpeg",
+
                         key=f"photo_{message.id}",
                     )
 
@@ -839,7 +1019,8 @@ for message in messages:
                     download_media(
                         message,
                         folder,
-                    )
+                    ),
+                    timeout=600,
                 )
 
                 if audio_path:
@@ -851,14 +1032,16 @@ for message in messages:
                         else "audio/mpeg"
                     )
 
+
                     st.audio(
                         audio_path,
                         format=mime,
                     )
 
+
                     with open(
                         audio_path,
-                        "rb"
+                        "rb",
                     ) as f:
 
                         audio_data = f.read()
@@ -866,11 +1049,15 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download Audio",
+
                         data=audio_data,
+
                         file_name=os.path.basename(
                             audio_path
                         ),
+
                         mime=mime,
+
                         key=f"audio_{message.id}",
                     )
 
@@ -905,14 +1092,15 @@ for message in messages:
                     download_media(
                         message,
                         folder,
-                    )
+                    ),
+                    timeout=600,
                 )
 
                 if pdf_path:
 
                     with open(
                         pdf_path,
-                        "rb"
+                        "rb",
                     ) as f:
 
                         pdf_data = f.read()
@@ -955,9 +1143,13 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download PDF",
+
                         data=pdf_data,
+
                         file_name=pdf_name,
+
                         mime="application/pdf",
+
                         key=f"pdf_{message.id}",
                     )
 
@@ -992,7 +1184,8 @@ for message in messages:
                     download_media(
                         message,
                         folder,
-                    )
+                    ),
+                    timeout=600,
                 )
 
                 if file_path:
@@ -1012,7 +1205,7 @@ for message in messages:
 
                     with open(
                         file_path,
-                        "rb"
+                        "rb",
                     ) as f:
 
                         file_data = f.read()
@@ -1020,11 +1213,15 @@ for message in messages:
 
                     st.download_button(
                         "⬇️ Download File",
+
                         data=file_data,
+
                         file_name=os.path.basename(
                             file_path
                         ),
+
                         mime=mime,
+
                         key=f"document_{message.id}",
                     )
 
@@ -1054,6 +1251,7 @@ for message in messages:
         )
 
 
+    # Close card
     st.markdown(
         "</div>",
         unsafe_allow_html=True,
@@ -1061,14 +1259,18 @@ for message in messages:
 
 
 # ============================================================
-# 17. FOOTER
+# 19. FOOTER
 # ============================================================
 
 st.markdown(
     """
 <hr>
 
-<div style="text-align:center;color:#777;">
+<div style="
+    text-align:center;
+    color:#777;
+    padding:20px;
+">
 Telegram Website • Streamlit • Telegram API
 </div>
 """,
