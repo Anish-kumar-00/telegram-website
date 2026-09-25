@@ -4,6 +4,7 @@ import tempfile
 import html
 import mimetypes
 import base64
+import threading
 
 import streamlit as st
 from telethon import TelegramClient
@@ -107,11 +108,6 @@ st.markdown(
     font-size: 12px;
 }
 
-.small-text {
-    color: #aeb6c7;
-    font-size: 14px;
-}
-
 </style>
 """,
     unsafe_allow_html=True,
@@ -141,74 +137,130 @@ TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
 
 
 # ============================================================
-# 4. ASYNC HELPER
+# 4. TELEGRAM BACKGROUND LOOP
 # ============================================================
 
-def run_async(coro):
+class TelegramManager:
 
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    def __init__(self):
 
-    if loop.is_running():
+        self.loop = asyncio.new_event_loop()
 
-        new_loop = asyncio.new_event_loop()
+        self.client = None
+
+        self.thread = threading.Thread(
+            target=self._run_loop,
+            daemon=True,
+        )
+
+        self.thread.start()
+
+        self.ready = threading.Event()
+
+        # Wait until loop/thread is ready
+        self.ready.wait()
+
+        # Create Telegram client inside
+        # the SAME background event loop
+        future = asyncio.run_coroutine_threadsafe(
+            self._connect(),
+            self.loop,
+        )
+
+        future.result(timeout=60)
+
+
+    def _run_loop(self):
+
+        asyncio.set_event_loop(
+            self.loop
+        )
+
+        self.ready.set()
+
+        self.loop.run_forever()
+
+
+    async def _connect(self):
+
+        session_path = os.path.join(
+            tempfile.gettempdir(),
+            "telegram_website_session",
+        )
+
+        self.client = TelegramClient(
+            session_path,
+            API_ID,
+            API_HASH,
+        )
+
+        await self.client.start(
+            bot_token=BOT_TOKEN
+        )
+
+
+    def run(self, coro):
+
+        future = asyncio.run_coroutine_threadsafe(
+            coro,
+            self.loop,
+        )
+
+        return future.result(
+            timeout=300
+        )
+
+
+    def close(self):
+
+        if self.client:
+
+            try:
+
+                future = asyncio.run_coroutine_threadsafe(
+                    self.client.disconnect(),
+                    self.loop,
+                )
+
+                future.result(
+                    timeout=20
+                )
+
+            except Exception:
+                pass
 
         try:
-            return new_loop.run_until_complete(coro)
-        finally:
-            new_loop.close()
-
-    return loop.run_until_complete(coro)
+            self.loop.call_soon_threadsafe(
+                self.loop.stop
+            )
+        except Exception:
+            pass
 
 
 # ============================================================
-# 5. TELEGRAM CLIENT
+# 5. CREATE TELEGRAM MANAGER
 # ============================================================
-
-SESSION_FILE = os.path.join(
-    tempfile.gettempdir(),
-    "telegram_website_session"
-)
-
-
-async def create_client():
-
-    client = TelegramClient(
-        SESSION_FILE,
-        API_ID,
-        API_HASH,
-    )
-
-    await client.start(
-        bot_token=BOT_TOKEN
-    )
-
-    return client
-
 
 @st.cache_resource
-def get_client():
+def get_telegram_manager():
 
-    return run_async(
-        create_client()
-    )
+    return TelegramManager()
 
 
 try:
 
-    client = get_client()
+    telegram = get_telegram_manager()
+
+    client = telegram.client
 
 except Exception as e:
 
-    st.error("❌ Telegram connection failed.")
+    st.error(
+        "❌ Telegram connection failed."
+    )
 
-    st.code(str(e))
-
-    st.info(
-        "API ID, API HASH aur BOT TOKEN check karo."
+    st.code(
+        str(e)
     )
 
     st.stop()
@@ -226,7 +278,10 @@ async def get_channels():
 
         entity = dialog.entity
 
-        if isinstance(entity, Channel):
+        if isinstance(
+            entity,
+            Channel
+        ):
 
             if getattr(
                 entity,
@@ -244,7 +299,7 @@ async def get_channels():
                         "username": getattr(
                             entity,
                             "username",
-                            None
+                            None,
                         ),
                     }
                 )
@@ -254,7 +309,7 @@ async def get_channels():
 
 try:
 
-    channels = run_async(
+    channels = telegram.run(
         get_channels()
     )
 
@@ -264,7 +319,9 @@ except Exception as e:
         "❌ Channels load nahi ho pa rahe."
     )
 
-    st.code(str(e))
+    st.code(
+        str(e)
+    )
 
     st.stop()
 
@@ -291,7 +348,7 @@ PDFs, audio and other files.
 
 
 # ============================================================
-# 8. NO CHANNEL
+# 8. CHANNEL CHECK
 # ============================================================
 
 if not channels:
@@ -311,24 +368,23 @@ if not channels:
 # 9. SIDEBAR
 # ============================================================
 
-st.sidebar.title("📁 Telegram Channels")
+st.sidebar.title(
+    "📁 Telegram Channels"
+)
 
 st.sidebar.caption(
     f"{len(channels)} channel(s)"
 )
-
 
 channel_names = [
     channel["title"]
     for channel in channels
 ]
 
-
 selected_name = st.sidebar.radio(
     "Folders",
     channel_names,
 )
-
 
 selected_channel = next(
     (
@@ -361,13 +417,12 @@ PRIVATE TELEGRAM CHANNEL
 
 
 # ============================================================
-# 11. SEARCH + MESSAGE LIMIT
+# 11. SEARCH + LIMIT
 # ============================================================
 
 col1, col2 = st.columns(
     [4, 1]
 )
-
 
 with col1:
 
@@ -375,7 +430,6 @@ with col1:
         "🔎 Search files / messages",
         placeholder="Search...",
     )
-
 
 with col2:
 
@@ -406,7 +460,9 @@ async def fetch_messages(
         search=search if search else None,
     ):
 
-        result.append(message)
+        result.append(
+            message
+        )
 
     return result
 
@@ -417,7 +473,7 @@ with st.spinner(
 
     try:
 
-        messages = run_async(
+        messages = telegram.run(
             fetch_messages(
                 selected_channel["id"],
                 int(message_limit),
@@ -431,7 +487,9 @@ with st.spinner(
             "❌ Messages load nahi ho pa rahe."
         )
 
-        st.code(str(e))
+        st.code(
+            str(e)
+        )
 
         st.stop()
 
@@ -443,7 +501,6 @@ with st.spinner(
 st.caption(
     f"📦 {len(messages)} item(s) found"
 )
-
 
 if not messages:
 
@@ -497,6 +554,7 @@ def get_media_type(message):
         return "document"
 
     if message.text:
+
         return "text"
 
     return "other"
@@ -537,9 +595,9 @@ for message in messages:
     ).strip()
 
 
-    # --------------------------------------------------------
-    # TEXT
-    # --------------------------------------------------------
+    # ========================================================
+    # TEXT MESSAGE
+    # ========================================================
 
     if media_type == "text":
 
@@ -572,28 +630,24 @@ for message in messages:
         continue
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # UNKNOWN
-    # --------------------------------------------------------
+    # ========================================================
 
     if media_type == "other":
 
         continue
 
 
-    # --------------------------------------------------------
-    # CARD
-    # --------------------------------------------------------
+    # ========================================================
+    # FILE CARD
+    # ========================================================
 
     st.markdown(
         '<div class="file-card">',
         unsafe_allow_html=True,
     )
 
-
-    # --------------------------------------------------------
-    # FILE NAME
-    # --------------------------------------------------------
 
     filename = "Telegram File"
 
@@ -606,18 +660,23 @@ for message in messages:
 
 
     if media_type == "video":
+
         icon = "🎬"
 
     elif media_type == "photo":
+
         icon = "🖼️"
 
     elif media_type == "audio":
+
         icon = "🎵"
 
     elif media_type == "pdf":
+
         icon = "📕"
 
     else:
+
         icon = "📄"
 
 
@@ -651,7 +710,7 @@ for message in messages:
 
             try:
 
-                video_path = run_async(
+                video_path = telegram.run(
                     download_media(
                         message,
                         folder,
@@ -717,7 +776,7 @@ for message in messages:
 
             try:
 
-                image_path = run_async(
+                image_path = telegram.run(
                     download_media(
                         message,
                         folder,
@@ -776,7 +835,7 @@ for message in messages:
 
             try:
 
-                audio_path = run_async(
+                audio_path = telegram.run(
                     download_media(
                         message,
                         folder,
@@ -842,7 +901,7 @@ for message in messages:
 
             try:
 
-                pdf_path = run_async(
+                pdf_path = telegram.run(
                     download_media(
                         message,
                         folder,
@@ -929,7 +988,7 @@ for message in messages:
 
             try:
 
-                file_path = run_async(
+                file_path = telegram.run(
                     download_media(
                         message,
                         folder,
